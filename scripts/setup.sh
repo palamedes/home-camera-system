@@ -65,6 +65,23 @@ if [ "$PORT" -lt "$LIMIT" ]; then
 EOF
 fi
 
+# A blocked port here presents as a browser that hangs, which reads like an
+# application fault. Say so up front rather than letting it be debugged later.
+if systemctl is-active --quiet ufw 2>/dev/null || systemctl is-active --quiet firewalld 2>/dev/null; then
+  warn "A firewall is running. Sentry needs two ports open to the LAN:"
+  cat <<EOF
+
+      sudo ufw allow ${PORT}/tcp   comment 'Sentry NVR web'
+      sudo ufw allow 8555          comment 'Sentry NVR WebRTC'
+
+  8555 carries WebRTC media (mostly UDP) directly between browser and go2rtc.
+  Without it the player loads but stays black.
+
+  Do not open 8554 or 1984 — those are loopback-only by design.
+
+EOF
+fi
+
 say "Installing systemd user service"
 mkdir -p "${HOME}/.config/systemd/user"
 cp systemd/sentry-nvr.service "${HOME}/.config/systemd/user/"

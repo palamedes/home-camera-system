@@ -50,6 +50,31 @@ sudo loginctl enable-linger "$USER"    # keeps it running when logged out
 
 Open `http://<your-host>` and create the admin account on first visit.
 
+### Firewall
+
+If a firewall is running (`ufw status`), two ports must be open to the LAN:
+
+```bash
+sudo ufw allow 80/tcp    comment 'Sentry NVR web'
+sudo ufw allow 8555      comment 'Sentry NVR WebRTC'   # both TCP and UDP
+```
+
+8555 is easy to overlook. WebRTC media does not travel over the HTTP
+connection — the browser opens a separate flow straight to go2rtc, mostly over
+UDP. Leave it closed and the page loads, the stream negotiates, and then you
+get a black player with no error, which looks like a camera fault rather than
+a firewall one.
+
+Do **not** open 8554 (RTSP) or 1984 (go2rtc's API). Both bind to loopback by
+design: the API can rewrite go2rtc's own configuration and add arbitrary
+stream sources, so it is reachable only through this app's authenticated,
+allowlisted proxy.
+
+Symptom worth recognising: ufw's default policy is DROP, not REJECT, so a
+blocked port makes the browser hang until it times out rather than failing
+immediately. A page that spins forever while `curl` on the box itself answers
+instantly is a firewall, not the app.
+
 ### About that port
 
 Serving on 80 means no port to remember, but a process cannot bind it as an
