@@ -83,9 +83,6 @@
           <div class="mini-label">
             <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
             <span class="truncate">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></span>
-            {% if is_admin %}
-            <button class="vcam-del" data-vcam-del="{{ v.id }}" title="Remove virtual camera" aria-label="Remove">&times;</button>
-            {% endif %}
           </div>
         </div>
         {% endfor %}
@@ -205,15 +202,6 @@ initLiveTiles();
 
 // Virtual cameras: dewarp the parent stream to each saved angle in the browser.
 if (typeof initVirtualTiles === 'function') initVirtualTiles();
-
-document.querySelectorAll('[data-vcam-del]').forEach(btn => {
-  btn.addEventListener('click', async e => {
-    e.preventDefault();
-    if (!confirm('Remove this virtual camera?')) return;
-    const r = await fetch(`/api/virtual/${btn.dataset.vcamDel}`, { method: 'DELETE' });
-    if (r.ok) btn.closest('.vcam').remove();
-  });
-});
 
 const fmtUntil = ts => new Date(ts * 1000).toLocaleString([], {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',

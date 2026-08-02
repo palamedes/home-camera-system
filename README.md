@@ -8,21 +8,33 @@ Runs entirely on your LAN. No cloud, no account, no subscription.
 
 ## What it does
 
-- **Dashboard** — the landing page: camera status, storage, retention, and
-  system health at a glance. Built as a card grid so new panels can be dropped
-  in without touching layout.
+- **Dashboard** — the landing page: cameras, storage, and system health at a
+  glance, as a card grid.
 - **Discovery** — sweeps the local subnet for ONVIF and RTSP devices, and
   fingerprints vendors (Reolink's native API, ONVIF, MAC OUI) so a camera shows
-  up as "Reolink FE-P" rather than "something on port 554".
+  up as "Reolink FE-P" rather than "something on port 554". Cameras are added
+  from Settings.
 - **Live view** — WebRTC with sub-second latency, no transcoding. Falls back to
-  MJPEG on browsers or codecs that refuse it.
-- **Continuous recording** — one-minute MP4 segments written straight from the
+  MJPEG on browsers or codecs that refuse it. Optional on-demand audio (Opus,
+  transcoded only while someone is listening).
+- **Instant replay** — a scrubber on the live view rewinds the last few minutes
+  from an in-browser buffer, right up to the live edge.
+- **Continuous recording** — 60-second MP4 segments written straight from the
   camera's own stream. No re-encoding, so it costs almost no CPU.
-- **Timeline scrubbing** — click any point in the last N days and play from
-  there. Gaps in coverage are drawn as gaps.
-- **Ring-buffer retention** — oldest footage is pruned automatically against a
-  size budget, an age limit, and a hard free-space floor.
-- **Clip export** — download any window as a normal MP4.
+- **History** — scrub the timeline (down to a 10-minute zoom), drag to select
+  and export a clip, or Ctrl-drag to sweep the playhead.
+- **Ring-buffer retention** — oldest footage pruned automatically against a size
+  budget, an age limit (global or per-camera), and a hard free-space floor.
+- **360 / fisheye** — auto-detected fisheye cameras can be dewarped in the
+  browser (single / dual / quad / panorama, WebGL). Aim a view and save it as a
+  **virtual camera** that appears like a real one on the dashboard, cameras page,
+  and wall — with its own live view and dewarped history — all from the single
+  360 recording (no extra storage).
+- **Wall view** — every camera and virtual camera tiled edge-to-edge, chromeless.
+- **Users & roles** — an admin manages accounts; viewers can watch but not
+  change anything, and per-camera visibility controls what viewers see.
+- **Viewer counts** — see how many people are watching (and listening to) each
+  camera.
 
 ## Requirements
 
@@ -196,8 +208,9 @@ This is built for a trusted LAN. Before exposing it to the internet:
 ```
 nvr/
   main.py        routes and wiring
-  auth.py        sessions, password hashing, default-deny middleware
-  db.py          SQLite: users, cameras, segment index
+  auth.py        sessions, password hashing, roles, default-deny middleware
+  admin.py       CLI for account recovery (reset-password, add/delete user)
+  db.py          SQLite: users, cameras, virtual cameras, segment index
   discovery.py   subnet sweep + vendor fingerprinting
   onvif.py       minimal ONVIF SOAP client
   reolink.py     Reolink HTTP API
@@ -206,6 +219,11 @@ nvr/
   retention.py   ring-buffer pruning
   playback.py    timeline coverage, window rendering, clip export
   proxy.py       authenticated reverse proxy to go2rtc
+  static/
+    live.js      WebRTC live view + grid tiles
+    fisheye.js   WebGL fisheye dewarping + virtual cameras
+    replay.js    in-browser instant-replay buffer
+    timeline.js  history timeline (scrub, zoom, select, export)
 ```
 
 ## Licence
