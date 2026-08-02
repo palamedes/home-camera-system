@@ -1,0 +1,53 @@
+# Sentry NVR configuration.
+#
+# Copy to config/config.yaml and edit. Cameras are NOT defined here — they are
+# added through the web UI (discovery or manual entry) and stored in the
+# database, since credentials change and the UI needs to write them.
+
+server:
+  # 0.0.0.0 so the box is reachable at http://home.local:8080 from the LAN.
+  host: 0.0.0.0
+  port: 8080
+  # Session lifetime for a logged-in browser.
+  session_days: 30
+  # Set true only when this is served over HTTPS (e.g. behind Tailscale Serve).
+  # Marks the session cookie Secure. Leaving it false on a plain-HTTP LAN
+  # deployment is correct; flip it when you expose the box remotely.
+  secure_cookies: false
+
+storage:
+  # Where recordings live. Relative paths resolve against the project root.
+  recordings_dir: recordings
+  # Ring buffer limits. Whichever is hit first triggers pruning of the oldest
+  # footage. A percentage is taken against the total size of the filesystem
+  # holding recordings_dir.
+  max_usage: 80%
+  max_age_days: 7
+  # Length of each recorded file. 60s keeps the index small while limiting how
+  # much footage a single corrupt file can cost you.
+  segment_seconds: 60
+
+go2rtc:
+  binary: bin/go2rtc
+  # All bound to loopback: the browser reaches go2rtc only by proxy through
+  # this app, so streams are gated behind login.
+  api_port: 1984
+  rtsp_port: 8554
+  # WebRTC needs a real port reachable from the browser's host on the LAN.
+  webrtc_port: 8555
+
+discovery:
+  # CIDRs to scan. Empty means auto-detect from the box's own interfaces.
+  subnets: []
+  # Per-host connect timeout for the TCP sweep, seconds.
+  timeout: 1.0
+  # ONVIF WS-Discovery multicast wait, seconds.
+  onvif_wait: 3.0
+
+playback:
+  # Force transcode to H.264 even when the source is already H.264. Leave
+  # false: segments that are already browser-compatible are remuxed, which is
+  # far cheaper than re-encoding.
+  always_transcode: false
+  # Hardware transcode device. Set to null to force software encoding.
+  qsv_device: /dev/dri/renderD128

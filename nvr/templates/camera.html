@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{{ camera.name }} — Sentry{% endblock %}
+{% block main_class %}wrap-wide{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>{{ camera.name }}</h1>
+    <p>
+      {{ camera.model or camera.brand or 'Camera' }} &middot;
+      <span class="mono">{{ camera.host }}</span>
+      {% if camera.record %} &middot; recording {{ camera.record_stream }} stream{% endif %}
+    </p>
+  </div>
+  <div class="row" style="flex: 0 0 auto;">
+    <a href="/cameras/{{ camera.id }}/history" class="btn">History</a>
+  </div>
+</div>
+
+<div class="player" id="player"
+     data-stream="{{ stream_name }}"
+     data-sub="{{ sub_stream_name if camera.sub_url else '' }}">
+  <video id="video" autoplay muted playsinline></video>
+  <img id="fallback" hidden alt="{{ camera.name }} live view">
+  <div class="player-status" id="status"><span class="spinner"></span></div>
+</div>
+
+<div class="toolbar">
+  <button class="btn" id="mute-btn">Unmute</button>
+  <button class="btn" id="fullscreen-btn">Fullscreen</button>
+  <span class="spacer"></span>
+  <span class="muted small" id="mode-label"></span>
+</div>
+
+<div class="stats" style="margin-top: 22px;">
+  <div class="stat">
+    <div class="k">Recorder</div>
+    <div class="v">{{ 'Running' if recorder.running else 'Stopped' }}</div>
+    <div class="n">
+      {% if recorder.restarts %}{{ recorder.restarts }} restart{{ '' if recorder.restarts == 1 else 's' }}
+      {% else %}no restarts{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="k">Stored</div>
+    <div class="v">{{ stats.bytes | human_size }}</div>
+    <div class="n">{{ stats.segments }} segments</div>
+  </div>
+  <div class="stat">
+    <div class="k">Oldest footage</div>
+    <div class="v" id="oldest" data-ts="{{ stats.oldest or '' }}">&mdash;</div>
+    <div class="n">start of the buffer</div>
+  </div>
+  <div class="stat">
+    <div class="k">Latest footage</div>
+    <div class="v" id="newest" data-ts="{{ stats.newest or '' }}">&mdash;</div>
+    <div class="n">end of the buffer</div>
+  </div>
+</div>
+
+{% if recorder.last_error %}
+<div class="alert alert-warn" style="margin-top: 18px;">
+  Last recorder error: <span class="mono">{{ recorder.last_error }}</span>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/live.js"></script>
+<script>
+document.querySelectorAll('#oldest, #newest').forEach(el => {
+  const ts = parseFloat(el.dataset.ts);
+  if (ts) el.textContent = new Date(ts * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+});
+
+const player = document.getElementById('player');
+startLive({
+  stream: player.dataset.stream,
+  video: document.getElementById('video'),
+  fallback: document.getElementById('fallback'),
+  status: document.getElementById('status'),
+  modeLabel: document.getElementById('mode-label'),
+});
+
+const video = document.getElementById('video');
+const muteBtn = document.getElementById('mute-btn');
+muteBtn.addEventListener('click', () => {
+  video.muted = !video.muted;
+  muteBtn.textContent = video.muted ? 'Unmute' : 'Mute';
+});
+document.getElementById('fullscreen-btn').addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else player.requestFullscreen();
+});
+</script>
+{% endblock %}

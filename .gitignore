@@ -1,0 +1,15 @@
+# Secrets and runtime state — never commit these.
+config/config.yaml
+data/
+recordings/
+*.db
+*.db-wal
+*.db-shm
+
+# Vendored binary, downloaded by scripts/setup.sh
+bin/go2rtc
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]

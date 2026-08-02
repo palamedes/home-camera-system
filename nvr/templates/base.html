@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Sentry{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
+</head>
+<body>
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-dot"></span>
+    Sentry
+  </a>
+  {% set path = request.url.path %}
+  <nav>
+    <a href="/" class="{{ 'active' if path == '/' or path.startswith('/cameras') }}">Cameras</a>
+    <a href="/discover" class="{{ 'active' if path.startswith('/discover') }}">Discover</a>
+    <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <span class="who">{{ user['username'] }}</span>
+    <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
+  </form>
+</header>
+{% endif %}
+
+<main class="{% block main_class %}wrap{% endblock %}">
+  {% block content %}{% endblock %}
+</main>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

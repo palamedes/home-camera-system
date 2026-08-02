@@ -1,0 +1,33 @@
+[Unit]
+Description=Sentry NVR
+Documentation=https://github.com/palamedes/home-camera-system
+# Cameras are unreachable until the network is actually up, not merely
+# configured. Without this the recorder spends its first minute backing off.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/Cameras
+ExecStart=%h/Cameras/.venv/bin/python -m nvr
+Restart=always
+RestartSec=5
+
+# go2rtc and the ffmpeg fleet are children of this process; make sure a stop
+# or restart takes all of them with it rather than orphaning recorders.
+KillMode=control-group
+TimeoutStopSec=30
+
+# ffmpeg needs the render node for QuickSync transcoding during playback.
+SupplementaryGroups=render video
+
+# Modest hardening. The service needs write access only to its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}Discover cameras — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Discover cameras</h1>
+    <p>Scans your local network for ONVIF and RTSP devices.</p>
+  </div>
+  <button class="btn btn-primary" id="scan-btn">Scan network</button>
+</div>
+
+<div id="scan-status"></div>
+<div class="panel" id="results" hidden><div class="list" id="results-list"></div></div>
+
+<div class="panel panel-pad" style="margin-top: 22px;">
+  <h2 style="margin: 0 0 4px; font-size: 16px;">Add manually</h2>
+  <p class="muted small" style="margin: 0 0 16px;">
+    If a camera is on another subnet or blocks discovery, enter its address directly.
+  </p>
+  <form id="manual-form" class="row" style="align-items: flex-end;">
+    <div style="flex: 2;">
+      <label for="manual-host">IP address or hostname</label>
+      <input type="text" id="manual-host" placeholder="192.168.1.53" required>
+    </div>
+    <div style="flex: 0 0 auto;">
+      <button type="submit" class="btn">Connect</button>
+    </div>
+  </form>
+</div>
+
+<!-- Credential + stream selection, shown once a device is chosen. -->
+<div class="panel panel-pad" id="connect-panel" hidden style="margin-top: 22px;">
+  <h2 style="margin: 0 0 4px; font-size: 16px;">Connect to <span id="connect-host" class="mono"></span></h2>
+  <p class="muted small" style="margin: 0 0 16px;">
+    Credentials are stored on this box so the recorder can reconnect on its own.
+  </p>
+
+  <div id="connect-error"></div>
+
+  <div class="row">
+    <div class="field">
+      <label for="cam-user">Username</label>
+      <input type="text" id="cam-user" value="admin" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="cam-pass">Password</label>
+      <input type="password" id="cam-pass" autocomplete="off">
+    </div>
+  </div>
+  <button class="btn" id="inspect-btn">Check streams</button>
+
+  <div id="streams-panel" hidden style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px;">
+    <div class="field">
+      <label for="cam-name">Camera name</label>
+      <input type="text" id="cam-name" placeholder="Driveway">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="stream-main">Main stream (recorded)</label>
+        <select id="stream-main"></select>
+      </div>
+      <div class="field">
+        <label for="stream-sub">Substream (thumbnails)</label>
+        <select id="stream-sub"></select>
+      </div>
+    </div>
+    <div class="checkbox" style="margin-bottom: 16px;">
+      <input type="checkbox" id="cam-record" checked>
+      <label for="cam-record">Record this camera continuously</label>
+    </div>
+    <button class="btn btn-primary" id="add-btn">Add camera</button>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const scanBtn = document.getElementById('scan-btn');
+const scanStatus = document.getElementById('scan-status');
+const results = document.getElementById('results');
+const resultsList = document.getElementById('results-list');
+const connectPanel = document.getElementById('connect-panel');
+const connectHost = document.getElementById('connect-host');
+const connectError = document.getElementById('connect-error');
+const streamsPanel = document.getElementById('streams-panel');
+
+let selected = null;
+let inspected = null;
+
+function alertBox(kind, message) {
+  return `<div class="alert alert-${kind}">${message}</div>`;
+}
+
+scanBtn.addEventListener('click', async () => {
+  scanBtn.disabled = true;
+  scanBtn.innerHTML = '<span class="spinner"></span> Scanning';
+  scanStatus.innerHTML = alertBox('info',
+    'Sweeping the local network. This takes around 10&ndash;30 seconds.');
+  results.hidden = true;
+
+  try {
+    const response = await fetch('/api/discover', { method: 'POST' });
+    if (!response.ok) throw new Error(`scan failed (${response.status})`);
+    render(await response.json());
+  } catch (error) {
+    scanStatus.innerHTML = alertBox('error', `Scan failed: ${error.message}`);
+  } finally {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan network';
+  }
+});
+
+function render(candidates) {
+  if (!candidates.length) {
+    scanStatus.innerHTML = alertBox('warn',
+      'No cameras found. If yours is on a different subnet or VLAN, add it manually below.');
+    results.hidden = true;
+    return;
+  }
+
+  scanStatus.innerHTML = alertBox('info',
+    `Found ${candidates.length} likely camera${candidates.length === 1 ? '' : 's'}.`);
+
+  resultsList.innerHTML = candidates.map(c => {
+    const tags = [];
+    if (c.brand) tags.push(c.brand);
+    if (c.onvif) tags.push('ONVIF');
+    if (c.rtsp) tags.push('RTSP');
+    if (c.mac) tags.push(c.mac);
+    const dot = c.confidence === 'high' ? 'dot-ok'
+      : c.confidence === 'medium' ? 'dot-warn' : 'dot-bad';
+    return `
+      <div class="list-item">
+        <span class="dot ${dot}"></span>
+        <div class="grow">
+          <div class="title mono">${c.host}</div>
+          <div class="sub">${tags.join(' &middot; ') || 'unidentified device'}</div>
+        </div>
+        ${c.known
+          ? `<a class="btn btn-sm" href="/cameras/${c.camera_id}">Already added</a>`
+          : `<button class="btn btn-sm btn-primary" data-host="${c.host}"
+               data-brand="${c.brand || ''}" data-onvif="${c.onvif_url || ''}"
+               data-mac="${c.mac || ''}">Connect</button>`}
+      </div>`;
+  }).join('');
+
+  resultsList.querySelectorAll('button[data-host]').forEach(button => {
+    button.addEventListener('click', () => openConnect({
+      host: button.dataset.host,
+      brand: button.dataset.brand || null,
+      onvif_url: button.dataset.onvif || null,
+      mac: button.dataset.mac || null,
+    }));
+  });
+
+  results.hidden = false;
+}
+
+document.getElementById('manual-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const host = document.getElementById('manual-host').value.trim();
+  if (host) openConnect({ host, brand: null, onvif_url: null, mac: null });
+});
+
+function openConnect(target) {
+  selected = target;
+  inspected = null;
+  connectHost.textContent = target.host;
+  connectPanel.hidden = false;
+  streamsPanel.hidden = true;
+  connectError.innerHTML = '';
+  connectPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('cam-pass').focus();
+}
+
+document.getElementById('inspect-btn').addEventListener('click', async () => {
+  const button = document.getElementById('inspect-btn');
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Checking';
+  connectError.innerHTML = '';
+
+  try {
+    const response = await fetch('/api/cameras/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        host: selected.host,
+        brand: selected.brand,
+        onvif_url: selected.onvif_url,
+        username: document.getElementById('cam-user').value,
+        password: document.getElementById('cam-pass').value,
+      }),
+    });
+    const data = await response.json();
+
+    if (!data.streams || !data.streams.length) {
+      connectError.innerHTML = alertBox('error',
+        data.error || 'No streams found. Check the username and password.');
+      streamsPanel.hidden = true;
+      return;
+    }
+
+    inspected = data;
+    const label = s => {
+      const bits = [s.name];
+      if (s.resolution) bits.push(s.resolution);
+      if (s.codec) bits.push(s.codec.toUpperCase());
+      if (s.fps) bits.push(`${s.fps}fps`);
+      return bits.join(' · ');
+    };
+    const options = data.streams
+      .map((s, i) => `<option value="${i}">${label(s)}</option>`).join('');
+
+    const mainSelect = document.getElementById('stream-main');
+    const subSelect = document.getElementById('stream-sub');
+    mainSelect.innerHTML = options;
+    subSelect.innerHTML = `<option value="">None</option>${options}`;
+    // Streams arrive highest-resolution first, so the second entry is the
+    // natural substream for thumbnails.
+    if (data.streams.length > 1) subSelect.value = '1';
+
+    const nameInput = document.getElementById('cam-name');
+    if (!nameInput.value) nameInput.value = data.name || data.model || selected.host;
+
+    streamsPanel.hidden = false;
+  } catch (error) {
+    connectError.innerHTML = alertBox('error', `Could not reach the camera: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Check streams';
+  }
+});
+
+document.getElementById('add-btn').addEventListener('click', async () => {
+  const button = document.getElementById('add-btn');
+  const mainIndex = parseInt(document.getElementById('stream-main').value, 10);
+  const subValue = document.getElementById('stream-sub').value;
+
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span> Verifying stream';
+  connectError.innerHTML = '';
+
+  try {
+    const response = await fetch('/api/cameras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('cam-name').value.trim(),
+        host: selected.host,
+        brand: inspected.brand,
+        model: inspected.model,
+        serial: inspected.serial,
+        mac: selected.mac,
+        username: document.getElementById('cam-user').value,
+        password: document.getElementById('cam-pass').value,
+        main_url: inspected.streams[mainIndex].url,
+        sub_url: subValue === '' ? null : inspected.streams[parseInt(subValue, 10)].url,
+        record: document.getElementById('cam-record').checked,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'could not add camera');
+    window.location = data.redirect;
+  } catch (error) {
+    connectError.innerHTML = alertBox('error', error.message);
+    button.disabled = false;
+    button.textContent = 'Add camera';
+  }
+});
+</script>
+{% endblock %}

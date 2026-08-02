@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}{{ camera.name }} history — Sentry{% endblock %}
+{% block main_class %}wrap-wide{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>{{ camera.name }} &mdash; history</h1>
+    <p id="playhead-label">Select a moment on the timeline below.</p>
+  </div>
+  <a href="/cameras/{{ camera.id }}" class="btn">Back to live</a>
+</div>
+
+{% if not bounds %}
+<div class="empty">
+  <h2>No recorded footage yet</h2>
+  <p>
+    Recording starts as soon as the camera connects. Segments are indexed about
+    a minute after they are written, so give it a couple of minutes.
+  </p>
+  <a href="/cameras/{{ camera.id }}" class="btn">Back to live view</a>
+</div>
+{% else %}
+
+<div class="player" id="player">
+  <video id="video" controls autoplay playsinline></video>
+  <div class="player-status" id="status">Pick a time below to start playback</div>
+</div>
+
+<div class="toolbar">
+  <button class="btn btn-sm" data-jump="-3600">&laquo; 1h</button>
+  <button class="btn btn-sm" data-jump="-600">&laquo; 10m</button>
+  <button class="btn btn-sm" data-jump="-60">&laquo; 1m</button>
+  <button class="btn btn-sm" data-jump="60">1m &raquo;</button>
+  <button class="btn btn-sm" data-jump="600">10m &raquo;</button>
+  <button class="btn btn-sm" data-jump="3600">1h &raquo;</button>
+  <span class="spacer"></span>
+  <select id="span" style="width: auto;">
+    <option value="3600">Last hour</option>
+    <option value="21600">Last 6 hours</option>
+    <option value="86400" selected>Last 24 hours</option>
+    <option value="259200">Last 3 days</option>
+    <option value="604800">Last 7 days</option>
+  </select>
+  <button class="btn btn-sm" id="download-btn" disabled>Download 1 min</button>
+</div>
+
+<div class="timeline-wrap">
+  <canvas id="timeline"></canvas>
+  <div class="timeline-labels">
+    <span id="label-start"></span>
+    <span id="label-mid"></span>
+    <span id="label-end"></span>
+  </div>
+</div>
+
+<div class="stats" style="margin-top: 22px;">
+  <div class="stat">
+    <div class="k">Buffer start</div>
+    <div class="v small" data-ts="{{ bounds.start }}">&mdash;</div>
+  </div>
+  <div class="stat">
+    <div class="k">Buffer end</div>
+    <div class="v small" data-ts="{{ bounds.end }}">&mdash;</div>
+  </div>
+  <div class="stat">
+    <div class="k">Stored</div>
+    <div class="v">{{ stats.bytes | human_size }}</div>
+    <div class="n">{{ stats.segments }} segments</div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if bounds %}
+<script src="/static/timeline.js"></script>
+<script>
+document.querySelectorAll('[data-ts]').forEach(el => {
+  const ts = parseFloat(el.dataset.ts);
+  if (ts) el.textContent = new Date(ts * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
+});
+
+initHistory({
+  cameraId: {{ camera.id | tojson }},
+  bounds: {{ bounds | tojson }},
+});
+</script>
+{% endif %}
+{% endblock %}

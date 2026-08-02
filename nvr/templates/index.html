@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Cameras — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Cameras</h1>
+    <p>{{ cameras|length }} camera{{ '' if cameras|length == 1 else 's' }} configured</p>
+  </div>
+  <a href="/discover" class="btn btn-primary">Add camera</a>
+</div>
+
+{% if cameras %}
+<div class="stats" style="margin-bottom: 22px;">
+  <div class="stat">
+    <div class="k">Recorded</div>
+    <div class="v">{{ storage.used_bytes | human_size }}</div>
+    <div class="n">of {{ storage.quota_bytes | human_size }} budget</div>
+    {% set pct = (storage.used_bytes / storage.quota_bytes * 100) if storage.quota_bytes else 0 %}
+    <div class="bar {{ 'crit' if pct > 92 else 'hot' if pct > 75 else '' }}">
+      <span style="width: {{ [pct, 100] | min }}%"></span>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="k">Retention</div>
+    <div class="v">
+      {% if storage.projected_days %}{{ '%.1f' % storage.projected_days }} days
+      {% else %}&mdash;{% endif %}
+    </div>
+    <div class="n">
+      {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}/day
+      {% else %}measuring&hellip;{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="k">Age limit</div>
+    <div class="v">{{ storage.max_age_days }} days</div>
+    <div class="n">oldest footage is pruned</div>
+  </div>
+  <div class="stat">
+    <div class="k">Disk free</div>
+    <div class="v">{{ storage.disk_free | human_size }}</div>
+    <div class="n">of {{ storage.disk_total | human_size }}</div>
+  </div>
+</div>
+
+<div class="grid">
+  {% for camera in cameras %}
+  <a class="tile" href="/cameras/{{ camera.id }}">
+    <div class="tile-media">
+      {% if camera.online %}
+        <img data-snapshot="{{ camera.id }}" alt="{{ camera.name }}"
+             src="/api/cameras/{{ camera.id }}/snapshot.jpg">
+        {% if camera.record %}<span class="badge badge-rec">REC</span>{% endif %}
+      {% else %}
+        <div class="placeholder">
+          {% if camera.recorder.last_error %}
+            Offline<br><span class="small">{{ camera.recorder.last_error|truncate(70) }}</span>
+          {% else %}
+            Connecting&hellip;
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+    <div class="tile-body">
+      <div class="tile-name">
+        <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
+        <span class="truncate">{{ camera.name }}</span>
+      </div>
+      <div class="tile-meta">
+        <span>{{ camera.model or camera.brand or 'Camera' }}</span>
+        <span class="mono">{{ camera.host }}</span>
+        {% if camera.stats.bytes %}<span>{{ camera.stats.bytes | human_size }} stored</span>{% endif %}
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty">
+  <h2>No cameras yet</h2>
+  <p>Scan your network to find cameras, or add one manually by IP address.</p>
+  <a href="/discover" class="btn btn-primary">Scan for cameras</a>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Refresh tiles from still frames rather than holding live streams open. A
+// grid of decoded 6 MP streams would cost far more than the overview needs.
+setInterval(() => {
+  document.querySelectorAll('img[data-snapshot]').forEach(img => {
+    img.src = `/api/cameras/${img.dataset.snapshot}/snapshot.jpg?t=${Date.now()}`;
+  });
+}, 10000);
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Sentry{% endblock %}
+{% block main_class %}auth-shell{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <h1>Sentry</h1>
+  <p class="sub">Sign in to view your cameras.</p>
+
+  {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next|default('/') }}">
+    <div class="field">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" value="{{ username|default('') }}"
+             autocomplete="username" autofocus required>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+</div>
+{% endblock %}

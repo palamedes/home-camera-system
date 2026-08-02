@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Set up Sentry{% endblock %}
+{% block main_class %}auth-shell{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <h1>Welcome to Sentry</h1>
+  <p class="sub">Create the administrator account. This is the only account until you add more.</p>
+
+  {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/setup">
+    <div class="field">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" value="{{ username|default('') }}"
+             autocomplete="username" autofocus required minlength="3">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="new-password"
+             required minlength="8">
+    </div>
+    <div class="field">
+      <label for="confirm">Confirm password</label>
+      <input type="password" id="confirm" name="confirm" autocomplete="new-password"
+             required minlength="8">
+    </div>
+    <button type="submit" class="btn btn-primary">Create account</button>
+  </form>
+</div>
+{% endblock %}

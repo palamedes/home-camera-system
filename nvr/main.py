@@ -1,0 +1,468 @@
+"""Application entry point: routes, wiring, lifecycle."""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+    Response, StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from . import auth, config as config_module, discovery, playback, proxy, streams
+from .db import Database
+from .recorder import RecordingService
+from .retention import RetentionService
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
+log = logging.getLogger("nvr")
+
+HERE = Path(__file__).resolve().parent
+
+cfg = config_module.load()
+db = Database(cfg.db_path)
+go2rtc = streams.Go2rtcManager(cfg, db)
+recording = RecordingService(cfg, db, go2rtc)
+retention = RetentionService(cfg, db)
+
+templates = Jinja2Templates(directory=str(HERE / "templates"))
+templates.env.filters["human_size"] = config_module.human_size
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db.purge_expired_sessions()
+    go2rtc.start()
+    recording.start()
+    retention.start()
+    log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
+    try:
+        yield
+    finally:
+        retention.stop()
+        recording.stop()
+        go2rtc.stop()
+
+
+app = FastAPI(title="Sentry NVR", lifespan=lifespan, docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+app.add_middleware(auth.AuthMiddleware, db=db, config=cfg)
+
+
+def render(request: Request, template: str, **context: Any) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request, template, {"user": auth.current_user(request), **context}
+    )
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "camera"
+
+
+def unique_camera_id(name: str) -> str:
+    base = slugify(name)
+    candidate, suffix = base, 2
+    while db.camera(candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+# ---------------------------------------------------------------------------
+# Auth pages
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/setup", response_class=HTMLResponse)
+def setup_form(request: Request):
+    if db.user_count() > 0:
+        return RedirectResponse("/login", status_code=303)
+    return render(request, "setup.html")
+
+
+@app.post("/setup")
+def setup_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    confirm: str = Form(...),
+):
+    if db.user_count() > 0:
+        return RedirectResponse("/login", status_code=303)
+    error = None
+    if len(username.strip()) < 3:
+        error = "Username must be at least 3 characters."
+    elif len(password) < 8:
+        error = "Password must be at least 8 characters."
+    elif password != confirm:
+        error = "Passwords do not match."
+    if error:
+        return render(request, "setup.html", error=error, username=username)
+
+    user_id = db.create_user(username.strip(), auth.hash_password(password))
+    token = auth.new_token()
+    db.create_session(token, user_id, cfg.server.session_days * 86400)
+    response = RedirectResponse("/", status_code=303)
+    auth.set_session_cookie(
+        response, token, days=cfg.server.session_days, secure=cfg.server.secure_cookies
+    )
+    return response
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request, next: str = "/"):
+    if auth.current_user(request):
+        return RedirectResponse("/", status_code=303)
+    return render(request, "login.html", next=next)
+
+
+@app.post("/login")
+def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+):
+    user = db.user_by_name(username.strip())
+    if not user or not auth.verify_password(password, user["password_hash"]):
+        # Deliberately vague: distinguishing "no such user" from "wrong
+        # password" tells an attacker which usernames are real.
+        time.sleep(0.5)
+        return render(
+            request, "login.html", error="Incorrect username or password.",
+            username=username, next=next,
+        )
+    token = auth.new_token()
+    db.create_session(token, user["id"], cfg.server.session_days * 86400)
+    target = next if next.startswith("/") else "/"
+    response = RedirectResponse(target, status_code=303)
+    auth.set_session_cookie(
+        response, token, days=cfg.server.session_days, secure=cfg.server.secure_cookies
+    )
+    return response
+
+
+@app.post("/logout")
+def logout(request: Request):
+    token = request.cookies.get(auth.COOKIE_NAME)
+    if token:
+        db.delete_session(token)
+    response = RedirectResponse("/login", status_code=303)
+    auth.clear_session_cookie(response)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    cameras = [dict(row) for row in db.cameras()]
+    status = go2rtc.stream_status()
+    recorder_status = recording.status()
+    for camera in cameras:
+        info = status.get(streams.main_stream_name(camera["id"])) or {}
+        producers = info.get("producers") or []
+        camera["online"] = any(p.get("state") not in (None, "closed") for p in producers)
+        camera["recorder"] = recorder_status.get(camera["id"], {})
+        camera["stats"] = db.camera_stats(camera["id"])
+    return render(request, "index.html", cameras=cameras, storage=retention.estimate())
+
+
+@app.get("/cameras/{camera_id}", response_class=HTMLResponse)
+def camera_page(request: Request, camera_id: str):
+    camera = db.camera(camera_id)
+    if not camera:
+        return render(request, "404.html", status_code=404)
+    return render(
+        request, "camera.html",
+        camera=dict(camera),
+        stats=db.camera_stats(camera_id),
+        recorder=recording.status().get(camera_id, {}),
+        stream_name=streams.main_stream_name(camera_id),
+        sub_stream_name=streams.sub_stream_name(camera_id),
+    )
+
+
+@app.get("/cameras/{camera_id}/history", response_class=HTMLResponse)
+def history_page(request: Request, camera_id: str):
+    camera = db.camera(camera_id)
+    if not camera:
+        return render(request, "404.html", status_code=404)
+    bounds = db.segment_bounds(camera_id)
+    return render(
+        request, "history.html",
+        camera=dict(camera),
+        bounds={"start": bounds[0], "end": bounds[1]} if bounds else None,
+        stats=db.camera_stats(camera_id),
+    )
+
+
+@app.get("/discover", response_class=HTMLResponse)
+def discover_page(request: Request):
+    return render(request, "discover.html")
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    return render(
+        request, "settings.html",
+        cameras=[dict(row) for row in db.cameras()],
+        storage=retention.estimate(),
+        config=cfg,
+    )
+
+
+# ---------------------------------------------------------------------------
+# API — cameras
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/cameras")
+def api_cameras():
+    status = go2rtc.stream_status()
+    result = []
+    for row in db.cameras():
+        camera = dict(row)
+        camera.pop("password", None)
+        info = status.get(streams.main_stream_name(camera["id"])) or {}
+        producers = info.get("producers") or []
+        camera["online"] = any(p.get("state") not in (None, "closed") for p in producers)
+        camera["stats"] = db.camera_stats(camera["id"])
+        result.append(camera)
+    return JSONResponse(result)
+
+
+@app.post("/api/discover")
+def api_discover():
+    known = {row["host"]: row["id"] for row in db.cameras()}
+    found = discovery.discover(
+        subnets=cfg.discovery.subnets or None,
+        timeout=cfg.discovery.timeout,
+        onvif_wait=cfg.discovery.onvif_wait,
+        known_hosts=known,
+    )
+    return JSONResponse([candidate.to_dict() for candidate in found])
+
+
+@app.post("/api/cameras/inspect")
+async def api_inspect(request: Request):
+    payload = await request.json()
+    host = (payload.get("host") or "").strip()
+    if not host:
+        return JSONResponse({"error": "host is required"}, status_code=400)
+    result = discovery.inspect(
+        host=host,
+        username=payload.get("username") or "",
+        password=payload.get("password") or "",
+        brand=payload.get("brand"),
+        onvif_url=payload.get("onvif_url"),
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/cameras")
+async def api_add_camera(request: Request):
+    payload = await request.json()
+    name = (payload.get("name") or "").strip()
+    host = (payload.get("host") or "").strip()
+    main_url = (payload.get("main_url") or "").strip()
+    if not (name and host and main_url):
+        return JSONResponse(
+            {"error": "name, host and main_url are required"}, status_code=400
+        )
+
+    # Verify before persisting: a camera that fails here would otherwise sit in
+    # the list looking healthy while producing nothing.
+    check = streams.probe_rtsp(main_url)
+    if not check.get("ok"):
+        return JSONResponse(
+            {"error": f"Could not open the main stream: {check.get('error')}"},
+            status_code=400,
+        )
+
+    camera_id = unique_camera_id(name)
+    db.add_camera(
+        id=camera_id,
+        name=name,
+        host=host,
+        port=int(payload.get("port") or 80),
+        brand=payload.get("brand"),
+        model=payload.get("model"),
+        serial=payload.get("serial"),
+        mac=payload.get("mac"),
+        username=payload.get("username"),
+        password=payload.get("password"),
+        main_url=main_url,
+        sub_url=(payload.get("sub_url") or "").strip() or None,
+        record=1 if payload.get("record", True) else 0,
+        record_stream=payload.get("record_stream") or "main",
+        enabled=1,
+        last_seen=int(time.time()),
+    )
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse(
+        {"id": camera_id, "probe": check, "redirect": f"/cameras/{camera_id}"}
+    )
+
+
+@app.patch("/api/cameras/{camera_id}")
+async def api_update_camera(camera_id: str, request: Request):
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
+               "username", "password"}
+    fields = {k: v for k, v in payload.items() if k in allowed}
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    for flag in ("record", "enabled"):
+        if flag in fields:
+            fields[flag] = 1 if fields[flag] else 0
+    db.update_camera(camera_id, **fields)
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/cameras/{camera_id}")
+def api_delete_camera(camera_id: str, purge: bool = False):
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if purge:
+        import shutil
+
+        shutil.rmtree(cfg.storage.recordings_dir / camera_id, ignore_errors=True)
+    db.delete_camera(camera_id)
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse({"ok": True, "purged": purge})
+
+
+@app.get("/api/cameras/{camera_id}/snapshot.jpg")
+def api_snapshot(camera_id: str):
+    if not db.camera(camera_id):
+        return Response("not found", status_code=404)
+    frame = go2rtc.snapshot(camera_id)
+    if not frame:
+        return Response("no frame available", status_code=503)
+    return Response(
+        frame,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# API — playback
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/cameras/{camera_id}/timeline")
+def api_timeline(camera_id: str, start: float, end: float):
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if end <= start:
+        return JSONResponse({"error": "end must be after start"}, status_code=400)
+    ranges = playback.coverage(db, camera_id, start, end)
+    bounds = db.segment_bounds(camera_id)
+    return JSONResponse({
+        "camera_id": camera_id,
+        "start": start,
+        "end": end,
+        "ranges": [r.to_dict() for r in ranges],
+        "bounds": {"start": bounds[0], "end": bounds[1]} if bounds else None,
+    })
+
+
+@app.get("/api/cameras/{camera_id}/playback.mp4")
+def api_playback(camera_id: str, start: float, duration: float = 300.0):
+    if not db.camera(camera_id):
+        return Response("not found", status_code=404)
+    duration = max(1.0, min(duration, 3600.0))
+    try:
+        chunks = playback.stream_window(db, cfg, camera_id, start, duration)
+    except FileNotFoundError:
+        return Response("no footage for that time", status_code=404)
+    return StreamingResponse(
+        chunks,
+        media_type="video/mp4",
+        headers={"Cache-Control": "no-store", "Accept-Ranges": "none"},
+    )
+
+
+@app.get("/api/cameras/{camera_id}/clip.mp4")
+def api_clip(camera_id: str, start: float, duration: float = 60.0):
+    if not db.camera(camera_id):
+        return Response("not found", status_code=404)
+    duration = max(1.0, min(duration, 1800.0))
+    try:
+        path = playback.export_clip(db, cfg, camera_id, start, duration)
+    except FileNotFoundError:
+        return Response("no footage for that time", status_code=404)
+    except RuntimeError as exc:
+        return Response(f"export failed: {exc}", status_code=500)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(start))
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"{camera_id}-{stamp}.mp4",
+        background=_cleanup(path),
+    )
+
+
+def _cleanup(path: Path):
+    """Delete an exported clip once it has been sent."""
+    from starlette.background import BackgroundTask
+    import shutil
+
+    return BackgroundTask(lambda: shutil.rmtree(path.parent, ignore_errors=True))
+
+
+# ---------------------------------------------------------------------------
+# API — status
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/status")
+def api_status():
+    return JSONResponse({
+        "storage": retention.estimate(),
+        "recorders": recording.status(),
+        "streams": {
+            name: {"producers": len(info.get("producers") or [])}
+            for name, info in go2rtc.stream_status().items()
+        },
+        "go2rtc_running": go2rtc.process is not None and go2rtc.process.poll() is None,
+    })
+
+
+# ---------------------------------------------------------------------------
+# go2rtc proxy — live video, gated by the session
+# ---------------------------------------------------------------------------
+
+
+@app.api_route("/go2rtc/{path:path}", methods=["GET", "POST"])
+async def go2rtc_proxy(request: Request, path: str):
+    return await proxy.forward(request, path, cfg)

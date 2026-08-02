@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Settings — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p>Storage limits live in <span class="mono">config/config.yaml</span>.</p>
+  </div>
+</div>
+
+<div class="stats" style="margin-bottom: 26px;">
+  <div class="stat">
+    <div class="k">Recorded</div>
+    <div class="v">{{ storage.used_bytes | human_size }}</div>
+    <div class="n">budget {{ storage.quota_bytes | human_size }} ({{ config.storage.max_usage }})</div>
+  </div>
+  <div class="stat">
+    <div class="k">Write rate</div>
+    <div class="v">
+      {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}{% else %}&mdash;{% endif %}
+    </div>
+    <div class="n">per day, measured</div>
+  </div>
+  <div class="stat">
+    <div class="k">Projected retention</div>
+    <div class="v">
+      {% if storage.projected_days %}{{ '%.1f' % storage.projected_days }} days{% else %}&mdash;{% endif %}
+    </div>
+    <div class="n">capped at {{ storage.max_age_days }} days</div>
+  </div>
+  <div class="stat">
+    <div class="k">Disk</div>
+    <div class="v">{{ storage.disk_free | human_size }}</div>
+    <div class="n">free of {{ storage.disk_total | human_size }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
+    <h2 style="margin: 0; font-size: 16px;">Cameras</h2>
+  </div>
+  <div class="list">
+    {% for camera in cameras %}
+    <div class="list-item" data-camera="{{ camera.id }}">
+      <div class="grow">
+        <div class="title">{{ camera.name }}</div>
+        <div class="sub mono">{{ camera.host }} &middot; {{ camera.model or camera.brand or 'camera' }}</div>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="rec-{{ camera.id }}" data-toggle="record"
+               {{ 'checked' if camera.record }}>
+        <label for="rec-{{ camera.id }}">Record</label>
+      </div>
+      <a class="btn btn-sm" href="/cameras/{{ camera.id }}">View</a>
+      <button class="btn btn-sm btn-danger" data-delete>Remove</button>
+    </div>
+    {% else %}
+    <div class="list-item"><span class="muted">No cameras yet.</span></div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="panel panel-pad" style="margin-top: 22px;">
+  <h2 style="margin: 0 0 12px; font-size: 16px;">System</h2>
+  <div class="list" id="system-status">
+    <div class="list-item"><span class="muted">Loading&hellip;</span></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-toggle="record"]').forEach(box => {
+  box.addEventListener('change', async () => {
+    const id = box.closest('[data-camera]').dataset.camera;
+    box.disabled = true;
+    try {
+      await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record: box.checked }),
+      });
+    } finally {
+      box.disabled = false;
+    }
+  });
+});
+
+document.querySelectorAll('[data-delete]').forEach(button => {
+  button.addEventListener('click', async () => {
+    const row = button.closest('[data-camera]');
+    const id = row.dataset.camera;
+    const name = row.querySelector('.title').textContent;
+    if (!confirm(`Remove ${name}?\n\nRecorded footage is kept on disk unless you delete it separately.`)) return;
+    button.disabled = true;
+    const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (response.ok) row.remove();
+    else button.disabled = false;
+  });
+});
+
+(async function loadStatus() {
+  const container = document.getElementById('system-status');
+  try {
+    const data = await (await fetch('/api/status')).json();
+    const rows = [];
+    rows.push(row('Stream engine (go2rtc)', data.go2rtc_running ? 'Running' : 'Stopped',
+      data.go2rtc_running ? 'dot-ok' : 'dot-bad'));
+    for (const [id, r] of Object.entries(data.recorders || {})) {
+      rows.push(row(`Recorder: ${id}`,
+        r.running ? `Running · ${Math.floor(r.uptime / 60)} min` : (r.last_error || 'Stopped'),
+        r.running ? 'dot-ok' : 'dot-bad'));
+    }
+    container.innerHTML = rows.join('') || '<div class="list-item"><span class="muted">Nothing running.</span></div>';
+  } catch {
+    container.innerHTML = '<div class="list-item"><span class="muted">Status unavailable.</span></div>';
+  }
+
+  function row(title, detail, dot) {
+    return `<div class="list-item">
+      <span class="dot ${dot}"></span>
+      <div class="grow"><div class="title">${title}</div><div class="sub">${detail}</div></div>
+    </div>`;
+  }
+})();
+</script>
+{% endblock %}
