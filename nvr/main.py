@@ -439,14 +439,35 @@ def camera_page(request: Request, camera_id: str):
 
 
 @app.get("/cameras/{camera_id}/history", response_class=HTMLResponse)
-def history_page(request: Request, camera_id: str):
+def history_page(request: Request, camera_id: str, vcam: int | None = None):
     camera = db.camera(camera_id)
     if not camera or not can_view(request, camera):
         return render(request, "404.html", status_code=404)
+
+    # A virtual camera's history is this (parent) recording, dewarped in the
+    # browser to the virtual camera's saved angle — we don't record virtuals
+    # separately.
+    vcam_ctx = None
+    if vcam is not None:
+        v = db.virtual_camera(vcam)
+        if v and v["parent_id"] == camera_id:
+            import json as _json
+
+            try:
+                calib = _json.loads(v["calib"]) if v["calib"] else {}
+            except (ValueError, TypeError):
+                calib = {}
+            vcam_ctx = {
+                "id": v["id"], "name": v["name"],
+                "view": {"yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"]},
+                "calib": calib,
+            }
+
     bounds = db.segment_bounds(camera_id)
     return render(
         request, "history.html",
         camera=dict(camera),
+        vcam=vcam_ctx,
         bounds={"start": bounds[0], "end": bounds[1]} if bounds else None,
         stats=db.camera_stats(camera_id),
     )

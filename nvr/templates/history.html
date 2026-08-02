@@ -5,10 +5,12 @@
 
 <div class="page-head">
   <div>
-    <h1>{{ camera.name }} &mdash; history</h1>
-    <p id="playhead-label">Select a moment on the timeline below.</p>
+    <h1>{{ (vcam.name if vcam else camera.name) }} &mdash; history</h1>
+    <p id="playhead-label">
+      {% if vcam %}Recorded from {{ camera.name }}, dewarped. {% endif %}Select a moment on the timeline below.
+    </p>
   </div>
-  <a href="/cameras/{{ camera.id }}" class="btn">Back to live</a>
+  <a href="/cameras/{{ camera.id }}{{ '?vcam=' ~ vcam.id if vcam }}" class="btn">Back to live</a>
 </div>
 
 {% if not bounds %}
@@ -23,7 +25,8 @@
 {% else %}
 
 <div class="player" id="player">
-  <video id="video" controls autoplay playsinline></video>
+  <video id="video" {% if vcam %}muted{% else %}controls{% endif %} autoplay playsinline></video>
+  {% if vcam %}<canvas id="dewarp"></canvas>{% endif %}
   <div class="player-status" id="status">Pick a time below to start playback</div>
 </div>
 
@@ -86,6 +89,7 @@
 {% block scripts %}
 {% if bounds %}
 <script src="/static/timeline.js"></script>
+{% if vcam %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 document.querySelectorAll('[data-ts]').forEach(el => {
   const ts = parseFloat(el.dataset.ts);
@@ -98,6 +102,21 @@ initHistory({
   cameraId: {{ camera.id | tojson }},
   bounds: {{ bounds | tojson }},
 });
+
+{% if vcam %}
+// Dewarp the recorded (fisheye) playback to this virtual camera's saved angle.
+// The <video> plays the parent's footage; the canvas samples it each frame.
+if (typeof initFisheye === 'function') {
+  initFisheye(document.getElementById('video'), document.getElementById('dewarp'), {
+    cameraId: {{ camera.id | tojson }},
+    mode: 'single',
+    interactive: false,
+    persistCalib: false,
+    view: {{ vcam.view | tojson }},
+    calib: {{ vcam.calib | tojson }},
+  });
+}
+{% endif %}
 </script>
 {% endif %}
 {% endblock %}

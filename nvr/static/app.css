@@ -494,6 +494,7 @@ input:focus, select:focus {
   pointer-events: none;
   background: rgb(0 0 0 / .5);
   transition: opacity .3s;
+  z-index: 3;   /* above the dewarp canvas */
 }
 .player-status.hidden { opacity: 0; }
 

@@ -13,7 +13,7 @@
     </p>
   </div>
   <div class="row" style="flex: 0 0 auto;">
-    <a href="/cameras/{{ camera.id }}/history" class="btn">History</a>
+    <a href="/cameras/{{ camera.id }}/history" class="btn" id="history-link">History</a>
   </div>
 </div>
 
@@ -315,6 +315,9 @@ if (!fisheye) {
         if (data && data.calib) fisheye.setCalib(data.calib);
         if (data) fisheye.setView({ yaw: data.yaw, pitch: data.pitch, fov: data.fov });
         editing = { id: data.id, name: data.name };
+        // Point History at this virtual camera's dewarped recording.
+        const hist = document.getElementById('history-link');
+        if (hist) hist.href = `/cameras/{{ camera.id }}/history?vcam=${data.id}`;
       } catch (_) { /* fall through to default */ }
       seedSliders(fisheye.getCalib());
       applyMode('single');
