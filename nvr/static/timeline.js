@@ -13,7 +13,7 @@
 
 const CHUNK_SECONDS = 300;
 
-function initHistory({ cameraId, bounds }) {
+function initHistory({ cameraId, bounds, vcamId = null }) {
   const canvas = document.getElementById('timeline');
   const ctx = canvas.getContext('2d');
   const video = document.getElementById('video');
@@ -338,8 +338,79 @@ function initHistory({ cameraId, bounds }) {
   }
 
   document.getElementById('selection-clear').addEventListener('click', clearSelection);
+
+  // Capture the *rendered* playback in real time. For a virtual camera this is
+  // the dewarp canvas, so what you get is exactly the dewarped view — no
+  // server-side reprojection to get wrong. Raw cameras capture the video. The
+  // clip is then downloaded or saved to the box.
+  async function captureClip(download) {
+    if (!selection) return;
+    const el = document.getElementById('dewarp') || video;
+    const grab = el.captureStream ? el.captureStream.bind(el)
+      : el.mozCaptureStream ? el.mozCaptureStream.bind(el) : null;
+    if (!grab || typeof MediaRecorder === 'undefined') {
+      alert('This browser cannot capture clips.');
+      return;
+    }
+    const start = Math.floor(selection.start);
+    const secs = Math.max(1, Math.round(selection.end - selection.start));
+    const mime = ['video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+      .find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+    const rec = new MediaRecorder(grab(25), mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+    const finished = new Promise(res => { rec.onstop = res; });
+
+    const label = document.getElementById('selection-label');
+    const restore = label.textContent;
+    let left = secs;
+    label.textContent = `● Recording clip… ${left}s`;
+    const ticker = setInterval(() => {
+      left -= 1; label.textContent = `● Recording clip… ${Math.max(0, left)}s`;
+    }, 1000);
+
+    playFrom(start, { announce: false });
+    await new Promise(r => setTimeout(r, 500));   // let playback settle
+    rec.start();
+    setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, secs * 1000);
+    await finished;
+
+    clearInterval(ticker);
+    label.textContent = restore;
+    const blob = new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' });
+
+    const stamp = new Date(start * 1000).toLocaleString([], {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
+    });
+    if (download) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${cameraId}-${start}.webm`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    } else {
+      const fd = new FormData();
+      fd.append('file', blob, 'clip.webm');
+      fd.append('camera_id', cameraId);
+      fd.append('name', stamp);
+      if (vcamId != null) fd.append('vcam_id', String(vcamId));
+      fd.append('start', String(start));
+      fd.append('duration', String(secs));
+      const r = await fetch('/api/clips', { method: 'POST', body: fd });
+      if (r.ok) { if (confirm('Clip saved. View your clips now?')) location.href = '/clips'; }
+      else alert('Could not save the clip.');
+    }
+  }
+
+  document.getElementById('selection-save').addEventListener('click', () => captureClip(false));
   document.getElementById('selection-export').addEventListener('click', () => {
     if (!selection) return;
+    if (vcamId != null) {
+      // Dewarped view — capture the rendered canvas instead of the raw fisheye.
+      captureClip(true);
+      return;
+    }
     const start = Math.floor(selection.start);
     const duration = Math.max(1, Math.round(selection.end - selection.start));
     window.location = `/api/cameras/${encodeURIComponent(cameraId)}/clip.mp4`

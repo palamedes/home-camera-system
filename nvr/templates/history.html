@@ -55,6 +55,7 @@
   <span id="selection-label">&nbsp;</span>
   <span class="spacer"></span>
   <button class="btn btn-sm" id="selection-clear">Clear</button>
+  <button class="btn btn-sm" id="selection-save">Save clip</button>
   <button class="btn btn-sm btn-primary" id="selection-export">Export clip</button>
 </div>
 
@@ -101,6 +102,7 @@ document.querySelectorAll('[data-ts]').forEach(el => {
 initHistory({
   cameraId: {{ camera.id | tojson }},
   bounds: {{ bounds | tojson }},
+  vcamId: {{ vcam.id if vcam else 'null' }},
 });
 
 {% if vcam %}

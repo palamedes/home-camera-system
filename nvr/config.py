@@ -62,6 +62,8 @@ class ServerConfig:
 @dataclass
 class StorageConfig:
     recordings_dir: Path = ROOT / "recordings"
+    # Saved clips live here — kept permanently, never touched by retention.
+    clips_dir: Path = ROOT / "clips"
     max_usage: str = "80%"
     max_age_days: int = 7
     segment_seconds: int = 60
@@ -158,6 +160,7 @@ def load(path: Path | None = None) -> Config:
     st = raw.get("storage") or {}
     cfg.storage = StorageConfig(
         recordings_dir=_resolve(ROOT, st.get("recordings_dir", "recordings")),
+        clips_dir=_resolve(ROOT, st.get("clips_dir", "clips")),
         max_usage=str(st.get("max_usage", cfg.storage.max_usage)),
         max_age_days=int(st.get("max_age_days", cfg.storage.max_age_days)),
         segment_seconds=int(st.get("segment_seconds", cfg.storage.segment_seconds)),
@@ -186,4 +189,5 @@ def load(path: Path | None = None) -> Config:
 
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.storage.recordings_dir.mkdir(parents=True, exist_ok=True)
+    cfg.storage.clips_dir.mkdir(parents=True, exist_ok=True)
     return cfg

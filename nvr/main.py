@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import (
     FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
     Response, StreamingResponse,
@@ -945,6 +945,96 @@ async def api_presence_stream(request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# API — saved clips (kept permanently on the box; captured dewarped in-browser)
+# ---------------------------------------------------------------------------
+
+
+def _clip_allowed(request: Request, clip: Any) -> bool:
+    """Whether the user may see a clip: they can view its source camera, or
+    (for a clip whose camera was since deleted) they are an admin."""
+    camera = db.camera(clip["camera_id"])
+    if camera is not None:
+        return can_view(request, camera)
+    return auth.is_admin(auth.current_user(request))
+
+
+@app.post("/api/clips")
+async def api_save_clip(
+    request: Request,
+    file: UploadFile = File(...),
+    camera_id: str = Form(...),
+    name: str = Form(...),
+    vcam_id: str = Form(""),
+    start: float = Form(0.0),
+    duration: float = Form(0.0),
+):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = await file.read()
+    if not data:
+        return JSONResponse({"error": "empty clip"}, status_code=400)
+    if len(data) > 512 * 1024 * 1024:
+        return JSONResponse({"error": "clip too large"}, status_code=413)
+
+    ext = ".webm" if "webm" in (file.content_type or "").lower() else ".mp4"
+    fname = f"{slugify(camera_id)}-{int(time.time())}{ext}"
+    dest = cfg.storage.clips_dir / fname
+    dest.write_bytes(data)
+
+    vid = int(vcam_id) if vcam_id.strip().isdigit() else None
+    clip_id = db.add_clip(
+        camera_id=camera_id, name=(name.strip() or "Clip"), path=str(dest),
+        mime=file.content_type or "video/webm", size=len(data),
+        vcam_id=vid, start_ts=start or None, duration=duration or None,
+    )
+    return JSONResponse({"id": clip_id, "redirect": "/clips"})
+
+
+@app.get("/api/clips/{clip_id}/file")
+def api_clip_file(clip_id: int, request: Request):
+    clip = db.clip(clip_id)
+    if not clip or not _clip_allowed(request, clip):
+        return Response("not found", status_code=404)
+    path = Path(clip["path"])
+    if not path.exists():
+        return Response("clip file missing", status_code=404)
+    return FileResponse(path, media_type=clip["mime"] or "video/webm")
+
+
+@app.delete("/api/clips/{clip_id}")
+def api_delete_clip(clip_id: int, request: Request):
+    clip = db.clip(clip_id)
+    if not clip or not _clip_allowed(request, clip):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        Path(clip["path"]).unlink(missing_ok=True)
+    except OSError:
+        pass
+    db.delete_clip(clip_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/clips", response_class=HTMLResponse)
+def clips_page(request: Request):
+    clips = []
+    for c in db.clips():
+        if not _clip_allowed(request, c):
+            continue
+        camera = db.camera(c["camera_id"])
+        clips.append({
+            "id": c["id"],
+            "name": c["name"],
+            "camera_name": camera["name"] if camera else "(removed camera)",
+            "duration": c["duration"],
+            "size": c["size"],
+            "created_at": c["created_at"],
+            "mime": c["mime"],
+        })
+    return render(request, "clips.html", clips=clips)
 
 
 # ---------------------------------------------------------------------------

@@ -94,6 +94,23 @@ CREATE TABLE IF NOT EXISTS virtual_cameras (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vcam_parent ON virtual_cameras(parent_id);
+
+-- Saved clips: permanent exports kept on the box (never pruned). A clip is
+-- tied to the camera it came from (for access control) and optionally the
+-- virtual camera it was dewarped through.
+CREATE TABLE IF NOT EXISTS clips (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    camera_id  TEXT    NOT NULL,
+    vcam_id    INTEGER,
+    name       TEXT    NOT NULL,
+    start_ts   REAL,
+    duration   REAL,
+    path       TEXT    NOT NULL,
+    mime       TEXT,
+    size       INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_clips_created ON clips(created_at);
 """
 
 
@@ -278,6 +295,31 @@ class Database:
 
     def delete_virtual_camera(self, vid: int) -> None:
         self.execute("DELETE FROM virtual_cameras WHERE id = ?", (vid,))
+
+    # ---- clips -----------------------------------------------------------
+
+    def clips(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM clips ORDER BY created_at DESC")
+
+    def clip(self, clip_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM clips WHERE id = ?", (clip_id,))
+
+    def add_clip(
+        self, camera_id: str, name: str, path: str, mime: str, size: int,
+        vcam_id: int | None = None, start_ts: float | None = None,
+        duration: float | None = None,
+    ) -> int:
+        cur = self.execute(
+            "INSERT INTO clips "
+            "(camera_id, vcam_id, name, start_ts, duration, path, mime, size, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (camera_id, vcam_id, name, start_ts, duration, path, mime, size,
+             int(time.time())),
+        )
+        return int(cur.lastrowid or 0)
+
+    def delete_clip(self, clip_id: int) -> None:
+        self.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
 
     # ---- segments --------------------------------------------------------
 

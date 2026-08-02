@@ -2,6 +2,7 @@
 config/config.yaml
 data/
 recordings/
+clips/
 *.db
 *.db-wal
 *.db-shm

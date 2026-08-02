@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Clips — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Clips</h1>
+    <p>{{ clips|length }} saved clip{{ '' if clips|length == 1 else 's' }} &middot; kept on the box, never pruned</p>
+  </div>
+</div>
+
+{% if clips %}
+<div class="grid">
+  {% for c in clips %}
+  <div class="tile" data-clip="{{ c.id }}">
+    <div class="tile-media">
+      <video controls preload="metadata" src="/api/clips/{{ c.id }}/file#t=0.1"></video>
+    </div>
+    <div class="tile-body">
+      <div class="tile-name">
+        <span class="truncate">{{ c.name }}</span>
+        <button class="remove-x" data-clip-del="{{ c.id }}" data-clip-name="{{ c.name }}"
+                title="Delete clip" aria-label="Delete" style="margin-left:auto;">&times;</button>
+      </div>
+      <div class="tile-meta">
+        <span>{{ c.camera_name }}</span>
+        {% if c.duration %}<span>{{ '%.0f' % c.duration }}s</span>{% endif %}
+        <span>{{ c.size | human_size }}</span>
+        <span data-ts="{{ c.created_at }}"></span>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <a class="btn btn-sm" href="/api/clips/{{ c.id }}/file" download="{{ c.name }}">Download</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  <h2>No saved clips yet</h2>
+  <p>On a camera's history, select a span on the timeline and choose <strong>Save clip</strong>.
+     Clips from a virtual (dewarped) camera are saved as the dewarped view.</p>
+  <a href="/cameras" class="btn btn-primary">Go to cameras</a>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-ts]').forEach(el => {
+  const ts = parseFloat(el.dataset.ts);
+  if (ts) el.textContent = new Date(ts * 1000).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+});
+
+function confirmRemove(kind, name) {
+  const typed = prompt(`Delete the ${kind} "${name}"? This cannot be undone.\n\nType the name to confirm:`);
+  return typed != null && typed.trim().toLowerCase() === name.trim().toLowerCase();
+}
+
+document.querySelectorAll('[data-clip-del]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (!confirmRemove('clip', btn.dataset.clipName)) return;
+    const r = await fetch(`/api/clips/${btn.dataset.clipDel}`, { method: 'DELETE' });
+    if (r.ok) btn.closest('[data-clip]').remove();
+    else alert('Could not delete the clip.');
+  });
+});
+</script>
+{% endblock %}
