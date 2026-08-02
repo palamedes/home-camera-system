@@ -106,6 +106,7 @@
               {% else %}Recording{% endif %}
             </div>
           </div>
+          {% if is_admin %}
           <select class="rec-select" data-record-select
                   aria-label="Recording for {{ camera.name }}">
             <optgroup label="Continuous">
@@ -122,6 +123,7 @@
             <option value="keep" selected>Timed window</option>
             {% endif %}
           </select>
+          {% endif %}
         </div>
         {% endfor %}
       </div>

@@ -68,10 +68,11 @@ app.add_middleware(auth.AuthMiddleware, db=db, config=cfg)
 def render(
     request: Request, template: str, status_code: int = 200, **context: Any
 ) -> HTMLResponse:
+    user = auth.current_user(request)
     return templates.TemplateResponse(
         request,
         template,
-        {"user": auth.current_user(request), **context},
+        {"user": user, "is_admin": auth.is_admin(user), **context},
         status_code=status_code,
     )
 
@@ -126,7 +127,8 @@ def setup_submit(
     if error:
         return render(request, "setup.html", error=error, username=username)
 
-    user_id = db.create_user(username.strip(), auth.hash_password(password))
+    # The first account is always the admin.
+    user_id = db.create_user(username.strip(), auth.hash_password(password), role="admin")
     token = auth.new_token()
     db.create_session(token, user_id, cfg.server.session_days * 86400)
     response = RedirectResponse("/", status_code=303)
@@ -222,6 +224,90 @@ async def change_password(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# API — users (admin only; enforced in AuthMiddleware)
+# ---------------------------------------------------------------------------
+
+VALID_ROLES = {"admin", "viewer"}
+
+
+def _user_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "role": row["role"] if "role" in row.keys() else "admin",
+        "created_at": row["created_at"],
+    }
+
+
+@app.get("/api/users")
+def api_list_users():
+    return JSONResponse([_user_dict(u) for u in db.users()])
+
+
+@app.post("/api/users")
+async def api_create_user(request: Request):
+    payload = await request.json()
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    role = payload.get("role") or "viewer"
+
+    if len(username) < 3:
+        return JSONResponse({"error": "Username must be at least 3 characters."}, status_code=400)
+    if len(password) < 8:
+        return JSONResponse({"error": "Password must be at least 8 characters."}, status_code=400)
+    if role not in VALID_ROLES:
+        return JSONResponse({"error": "Invalid role."}, status_code=400)
+    if db.user_by_name(username):
+        return JSONResponse({"error": "That username is taken."}, status_code=400)
+
+    user_id = db.create_user(username, auth.hash_password(password), role=role)
+    return JSONResponse({"id": user_id, "username": username, "role": role})
+
+
+@app.patch("/api/users/{user_id}")
+async def api_update_user(user_id: int, request: Request):
+    target = db.user_by_id(user_id)
+    if not target:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+
+    if "role" in payload:
+        role = payload["role"]
+        if role not in VALID_ROLES:
+            return JSONResponse({"error": "Invalid role."}, status_code=400)
+        # Never let the last admin demote themselves out of existence.
+        if role != "admin" and target["role"] == "admin" and db.admin_count() <= 1:
+            return JSONResponse(
+                {"error": "This is the only admin — promote someone else first."},
+                status_code=400,
+            )
+        db.set_user_role(user_id, role)
+
+    if payload.get("password"):
+        if len(payload["password"]) < 8:
+            return JSONResponse(
+                {"error": "Password must be at least 8 characters."}, status_code=400
+            )
+        db.set_user_password(user_id, auth.hash_password(payload["password"]))
+
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/users/{user_id}")
+def api_delete_user(user_id: int, request: Request):
+    target = db.user_by_id(user_id)
+    if not target:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    me = auth.current_user(request)
+    if me and me["id"] == user_id:
+        return JSONResponse({"error": "You cannot delete your own account."}, status_code=400)
+    if target["role"] == "admin" and db.admin_count() <= 1:
+        return JSONResponse({"error": "Cannot delete the only admin."}, status_code=400)
+    db.delete_user(user_id)
+    return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
 
@@ -297,16 +383,23 @@ def history_page(request: Request, camera_id: str):
 
 @app.get("/discover", response_class=HTMLResponse)
 def discover_page(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return RedirectResponse("/", status_code=303)
     return render(request, "discover.html")
 
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
+    me = auth.current_user(request)
+    if not auth.is_admin(me):
+        return RedirectResponse("/", status_code=303)
     return render(
         request, "settings.html",
         cameras=[dict(row) for row in db.cameras()],
         storage=retention.estimate(),
         config=cfg,
+        users=[_user_dict(u) for u in db.users()] if auth.is_admin(me) else [],
+        me_id=me["id"] if me else None,
     )
 
 

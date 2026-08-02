@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE,
     password_hash TEXT    NOT NULL,
+    -- 'admin' can change everything and manage users; 'viewer' can only watch.
+    role          TEXT    NOT NULL DEFAULT 'admin',
     created_at    INTEGER NOT NULL
 );
 
@@ -100,6 +102,12 @@ class Database:
             if column not in have:
                 self.execute(statement)
 
+        user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
+        if "role" not in user_cols:
+            # Existing accounts predate roles; they were the sole operator, so
+            # they become admins.
+            self.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
+
     def connect(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
@@ -130,10 +138,11 @@ class Database:
         row = self.one("SELECT COUNT(*) AS n FROM users")
         return int(row["n"]) if row else 0
 
-    def create_user(self, username: str, password_hash: str) -> int:
+    def create_user(self, username: str, password_hash: str, role: str = "admin") -> int:
         cur = self.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-            (username, password_hash, int(time.time())),
+            "INSERT INTO users (username, password_hash, role, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (username, password_hash, role, int(time.time())),
         )
         return int(cur.lastrowid or 0)
 
@@ -142,6 +151,25 @@ class Database:
 
     def user_by_id(self, user_id: int) -> sqlite3.Row | None:
         return self.one("SELECT * FROM users WHERE id = ?", (user_id,))
+
+    def users(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM users ORDER BY created_at")
+
+    def admin_count(self) -> int:
+        row = self.one("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'")
+        return int(row["n"]) if row else 0
+
+    def set_user_role(self, user_id: int, role: str) -> None:
+        self.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+
+    def set_user_password(self, user_id: int, password_hash: str) -> None:
+        self.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id)
+        )
+
+    def delete_user(self, user_id: int) -> None:
+        self.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        self.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     # ---- sessions --------------------------------------------------------
 

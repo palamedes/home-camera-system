@@ -75,6 +75,20 @@ def current_user(request: Request) -> Any | None:
     return getattr(request.state, "user", None)
 
 
+def is_admin(user: Any | None) -> bool:
+    """Whether a user row carries the admin role.
+
+    A missing role reads as admin: pre-role accounts were the sole operator,
+    and the migration defaults them to admin.
+    """
+    if user is None:
+        return False
+    try:
+        return (user["role"] or "admin") == "admin"
+    except (KeyError, IndexError, TypeError):
+        return True
+
+
 class AuthMiddleware:
     """Gates every route behind a session.
 
@@ -128,5 +142,24 @@ class AuthMiddleware:
                 scope, receive, send
             )
             return
+
+        # Admin gate. Viewers may watch (GET) but not change anything: all
+        # user management, and any mutating camera/discovery call, requires
+        # admin. Enforced centrally so a viewer cannot reach a write endpoint
+        # by calling the API directly, regardless of what the UI shows.
+        if request.state.user is not None and not is_admin(request.state.user):
+            method = scope.get("method", "GET")
+            admin_only = (
+                path.startswith("/api/users")
+                or path.startswith("/api/discover")
+                or (path.startswith("/api/cameras") and method in ("POST", "PATCH", "DELETE"))
+            )
+            if admin_only:
+                from starlette.responses import JSONResponse
+
+                await JSONResponse({"error": "forbidden"}, status_code=403)(
+                    scope, receive, send
+                )
+                return
 
         await self.app(scope, receive, send)

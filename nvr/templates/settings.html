@@ -86,6 +86,35 @@
   </div>
 </div>
 
+{% if is_admin %}
+<div class="panel" style="margin-top: 22px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
+    <h2 style="margin: 0; font-size: 16px;">Users</h2>
+    <button class="btn btn-sm btn-primary" id="add-user-btn">Add user</button>
+  </div>
+  <div class="list" id="users-list">
+    {% for u in users %}
+    <div class="list-item" data-user="{{ u.id }}">
+      <span class="avatar">{{ u.username[:1] | upper }}</span>
+      <div class="grow">
+        <div class="title">{{ u.username }}{% if u.id == me_id %} <span class="muted small">(you)</span>{% endif %}</div>
+        <div class="sub">
+          <select data-role class="rec-select" {{ 'disabled' if u.id == me_id }}>
+            <option value="admin"  {{ 'selected' if u.role == 'admin' }}>Admin — full control</option>
+            <option value="viewer" {{ 'selected' if u.role == 'viewer' }}>Viewer — watch only</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-sm" data-reset-pw>Reset password</button>
+      {% if u.id != me_id %}
+      <button class="btn btn-sm btn-danger" data-delete-user>Remove</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="panel panel-pad" style="margin-top: 22px;">
   <h2 style="margin: 0 0 12px; font-size: 16px;">System</h2>
   <div class="list" id="system-status">
@@ -93,10 +122,125 @@
   </div>
 </div>
 
+{% if is_admin %}
+<div class="modal-backdrop" id="user-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+    <div class="modal-head">
+      <h2 id="user-modal-title">Add user</h2>
+      <button class="modal-close" id="user-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <form id="user-form" class="modal-body">
+      <div id="user-alert"></div>
+      <div class="field">
+        <label for="new-username">Username</label>
+        <input type="text" id="new-username" autocomplete="off" required minlength="3">
+      </div>
+      <div class="field">
+        <label for="new-password">Password</label>
+        <input type="password" id="new-password" autocomplete="new-password" required minlength="8">
+      </div>
+      <div class="field">
+        <label for="new-role">Role</label>
+        <select id="new-role">
+          <option value="viewer">Viewer — can watch live and history only</option>
+          <option value="admin">Admin — full control, can manage users</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" id="user-submit">Create user</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+// ---- user management (admin only; elements absent for viewers) ----
+(function () {
+  const modal = document.getElementById('user-modal');
+  const list = document.getElementById('users-list');
+  if (!modal || !list) return;
+
+  const form = document.getElementById('user-form');
+  const alertBox = document.getElementById('user-alert');
+  const submit = document.getElementById('user-submit');
+  const openBtn = document.getElementById('add-user-btn');
+  const closeBtn = document.getElementById('user-modal-close');
+
+  const show = () => { alertBox.innerHTML = ''; form.reset(); modal.hidden = false;
+    document.getElementById('new-username').focus(); };
+  const hide = () => { modal.hidden = true; };
+  openBtn.addEventListener('click', show);
+  closeBtn.addEventListener('click', hide);
+  modal.addEventListener('click', e => { if (e.target === modal) hide(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.hidden) hide(); });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    alertBox.innerHTML = '';
+    submit.disabled = true;
+    try {
+      const response = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('new-username').value.trim(),
+          password: document.getElementById('new-password').value,
+          role: document.getElementById('new-role').value,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { alertBox.innerHTML = `<div class="alert alert-error">${data.error || 'Could not create user.'}</div>`; return; }
+      location.reload();
+    } catch { alertBox.innerHTML = '<div class="alert alert-error">Network error.</div>'; }
+    finally { submit.disabled = false; }
+  });
+
+  list.querySelectorAll('select[data-role]').forEach(sel => {
+    const original = sel.value;
+    sel.addEventListener('change', async () => {
+      const id = sel.closest('[data-user]').dataset.user;
+      sel.disabled = true;
+      try {
+        const r = await fetch(`/api/users/${id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: sel.value }),
+        });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not change role.'); sel.value = original; }
+      } catch { sel.value = original; }
+      finally { sel.disabled = false; }
+    });
+  });
+
+  list.querySelectorAll('[data-reset-pw]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-user]');
+      const id = row.dataset.user;
+      const name = row.querySelector('.title').textContent.trim();
+      const pw = prompt(`New password for ${name} (min 8 characters):`);
+      if (!pw) return;
+      if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
+      const r = await fetch(`/api/users/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      alert(r.ok ? 'Password updated.' : 'Could not update password.');
+    });
+  });
+
+  list.querySelectorAll('[data-delete-user]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-user]');
+      const name = row.querySelector('.title').textContent.trim();
+      if (!confirm(`Remove user ${name}? This cannot be undone.`)) return;
+      const r = await fetch(`/api/users/${row.dataset.user}`, { method: 'DELETE' });
+      if (r.ok) row.remove();
+      else { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not remove user.'); }
+    });
+  });
+})();
+
 document.querySelectorAll('[data-toggle="record"]').forEach(box => {
   box.addEventListener('change', async () => {
     const id = box.closest('[data-camera]').dataset.camera;

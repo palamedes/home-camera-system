@@ -9,7 +9,7 @@
   </div>
   <div class="row" style="flex: 0 0 auto;">
     {% if cameras %}<a href="/wall" class="btn">Wall view</a>{% endif %}
-    <a href="/discover" class="btn btn-primary">Add camera</a>
+    {% if is_admin %}<a href="/discover" class="btn btn-primary">Add camera</a>{% endif %}
   </div>
 </div>
 

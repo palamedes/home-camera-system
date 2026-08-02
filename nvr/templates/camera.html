@@ -26,7 +26,6 @@
 </div>
 
 <div class="toolbar">
-  <button class="btn" id="mute-btn">Unmute</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
   {% if camera.sub_url %}
   <button class="btn" id="quality-btn"></button>
@@ -97,6 +96,10 @@ startLive({
   fallback: document.getElementById('fallback'),
   status: document.getElementById('status'),
   modeLabel: document.getElementById('mode-label'),
+  // Video-only. The cameras emit AAC, which WebRTC cannot carry natively;
+  // negotiating it caused the connection to drop right after the first frame.
+  // Audio needs a go2rtc Opus-transcode path (tracked separately).
+  audio: false,
 });
 
 // Quality toggle: flip ?hd and reload, which tears the old session down cleanly.
@@ -114,12 +117,6 @@ if (qualityBtn) {
   });
 }
 
-const video = document.getElementById('video');
-const muteBtn = document.getElementById('mute-btn');
-muteBtn.addEventListener('click', () => {
-  video.muted = !video.muted;
-  muteBtn.textContent = video.muted ? 'Unmute' : 'Mute';
-});
 document.getElementById('fullscreen-btn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else player.requestFullscreen();

@@ -18,8 +18,10 @@
   <nav>
     <a href="/" class="{{ 'active' if path == '/' }}">Dashboard</a>
     <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') }}">Cameras</a>
+    {% if is_admin %}
     <a href="/discover" class="{{ 'active' if path.startswith('/discover') }}">Discover</a>
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
+    {% endif %}
   </nav>
   <div class="account" id="account">
     <button class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false">
@@ -33,7 +35,7 @@
     <div class="account-menu" id="account-menu" role="menu" hidden>
       <div class="account-menu-head">
         <div class="account-menu-name">{{ user['username'] }}</div>
-        <div class="account-menu-sub">Signed in</div>
+        <div class="account-menu-sub">{{ 'Administrator' if is_admin else 'Viewer' }}</div>
       </div>
       <button class="menu-item" id="change-password-item" role="menuitem" type="button">
         Change password
