@@ -344,21 +344,18 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   async function captureClip(download) {
     if (!selection) return;
     const el = document.getElementById('dewarp') || video;
-    const grab = el.captureStream ? el.captureStream.bind(el)
-      : el.mozCaptureStream ? el.mozCaptureStream.bind(el) : null;
-    if (!grab || typeof MediaRecorder === 'undefined') {
+    const grab = (node, fps) => node.captureStream ? node.captureStream(fps)
+      : node.mozCaptureStream ? node.mozCaptureStream(fps) : null;
+    if (!grab(el) || typeof MediaRecorder === 'undefined') {
       alert('This browser cannot capture clips.');
       return;
     }
     const start = Math.floor(selection.start);
     const secs = Math.max(1, Math.round(selection.end - selection.start));
-    const mime = ['video/webm;codecs=vp8', 'video/webm', 'video/mp4']
+    // Prefer a codec string that carries audio, so dewarped clips keep sound.
+    const mime = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus',
+                  'video/webm', 'video/mp4']
       .find(m => MediaRecorder.isTypeSupported(m)) || '';
-
-    const rec = new MediaRecorder(grab(25), mime ? { mimeType: mime } : undefined);
-    const chunks = [];
-    rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
-    const finished = new Promise(res => { rec.onstop = res; });
 
     const label = document.getElementById('selection-label');
     const restore = label.textContent;
@@ -368,13 +365,34 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       left -= 1; label.textContent = `● Recording clip… ${Math.max(0, left)}s`;
     }, 1000);
 
+    // Start playback first so both the rendered frames and the audio track are
+    // live before we capture them, then unmute so the captured audio carries
+    // sound (the history <video> is muted for local output on a virtual camera).
+    const wasMuted = video.muted;
+    video.muted = false;
     playFrom(start, { announce: false });
     await new Promise(r => setTimeout(r, 500));   // let playback settle
+
+    let stream = grab(el, 25);
+    // The dewarp canvas has no audio of its own — splice in the playback audio
+    // from the <video> so saved/exported virtual-camera clips aren't silent.
+    if (el !== video) {
+      const vstream = grab(video);
+      const audio = vstream ? vstream.getAudioTracks() : [];
+      if (audio.length) stream = new MediaStream([...stream.getVideoTracks(), ...audio]);
+    }
+
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+    const finished = new Promise(res => { rec.onstop = res; });
+
     rec.start();
     setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, secs * 1000);
     await finished;
 
     clearInterval(ticker);
+    video.muted = wasMuted;
     label.textContent = restore;
     const blob = new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' });
 
