@@ -73,10 +73,21 @@
           {% endfor %}
         </select>
       </div>
-      <div class="checkbox">
-        <input type="checkbox" id="rec-{{ camera.id }}" data-toggle="record"
-               {{ 'checked' if camera.record }}>
-        <label for="rec-{{ camera.id }}">Record</label>
+      <div class="setting">
+        <label for="rec-{{ camera.id }}">Recording</label>
+        <select id="rec-{{ camera.id }}" data-record-select class="rec-select">
+          <option value="on"  {{ 'selected' if camera.record and not camera.record_until }}>On</option>
+          <option value="off" {{ 'selected' if not camera.record }}>Off</option>
+          <optgroup label="For the next…">
+            <option value="1h">Hour</option>
+            <option value="24h">24 hours</option>
+            <option value="3d">3 days</option>
+            <option value="5d">5 days</option>
+          </optgroup>
+          {% if camera.record and camera.record_until %}
+          <option value="keep" selected>Timed window</option>
+          {% endif %}
+        </select>
       </div>
       <div class="checkbox">
         <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye"
@@ -94,6 +105,7 @@
         <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
       </div>
       <a class="btn btn-sm" href="/cameras/{{ camera.id }}">View</a>
+      <a class="btn btn-sm" href="/cameras/{{ camera.id }}/history">History</a>
       <button class="btn btn-sm btn-danger" data-delete>Remove</button>
     </div>
     {% else %}
@@ -114,6 +126,11 @@
       <div class="grow">
         <div class="title">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></div>
         <div class="sub small">dewarped 360 view</div>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="vvis-{{ v.id }}" data-vcam-vis="{{ v.id }}"
+               {{ 'checked' if v.viewer_visible }}>
+        <label for="vvis-{{ v.id }}" title="Whether viewer accounts can see this virtual camera">Viewers</label>
       </div>
       <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">View</a>
       <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}/history?vcam={{ v.id }}">History</a>
@@ -352,6 +369,39 @@ document.querySelectorAll('[data-rename]').forEach(button => {
       else if (event.key === 'Escape') commit(false);
     });
     input.addEventListener('blur', () => commit(true));
+  });
+});
+
+// Recording control (On / Off / record for the next N).
+document.querySelectorAll('select[data-record-select]').forEach(select => {
+  const original = select.value;
+  select.addEventListener('change', async () => {
+    const mode = select.value;
+    if (mode === 'keep') return;
+    const id = select.closest('[data-camera]').dataset.camera;
+    select.disabled = true;
+    try {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record_mode: mode }),
+      });
+      if (!r.ok) select.value = original;
+    } catch { select.value = original; }
+    finally { select.disabled = false; }
+  });
+});
+
+document.querySelectorAll('[data-vcam-vis]').forEach(box => {
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try {
+      const r = await fetch(`/api/virtual/${box.dataset.vcamVis}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewer_visible: box.checked }),
+      });
+      if (!r.ok) box.checked = !box.checked;
+    } catch { box.checked = !box.checked; }
+    finally { box.disabled = false; }
   });
 });
 

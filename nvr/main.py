@@ -364,9 +364,12 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
 
     status = go2rtc.stream_status()
     result = []
+    admin = auth.is_admin(auth.current_user(request))
     for v in db.virtual_cameras():
         parent = db.camera(v["parent_id"])
         if not parent or not can_view(request, parent):
+            continue
+        if not admin and not v["viewer_visible"]:
             continue
         stream = (
             streams.sub_stream_name(parent["id"])
@@ -385,6 +388,7 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "stream": stream,
             "view": {"yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"]},
             "calib": calib,
+            "viewer_visible": bool(v["viewer_visible"]),
             "online": streams.stream_online(info),
         })
     return result
@@ -734,6 +738,8 @@ async def api_update_virtual(vid: int, request: Request):
             fields[key] = float(payload[key])
     if "calib" in payload:
         fields["calib"] = _json.dumps(payload["calib"] or {})
+    if "viewer_visible" in payload:
+        fields["viewer_visible"] = 1 if payload["viewer_visible"] else 0
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
     assigns = ", ".join(f"{k} = ?" for k in fields)

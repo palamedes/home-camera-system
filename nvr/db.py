@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS virtual_cameras (
     pitch      REAL    NOT NULL DEFAULT 0,
     fov        REAL    NOT NULL DEFAULT 1.5708,
     calib      TEXT,
+    viewer_visible INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vcam_parent ON virtual_cameras(parent_id);
@@ -127,6 +128,10 @@ class Database:
         for column, statement in additions.items():
             if column not in have:
                 self.execute(statement)
+
+        vcam_cols = {row["name"] for row in self.query("PRAGMA table_info(virtual_cameras)")}
+        if vcam_cols and "viewer_visible" not in vcam_cols:
+            self.execute("ALTER TABLE virtual_cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1")
 
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
         if "role" not in user_cols:

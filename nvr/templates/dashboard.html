@@ -2,14 +2,6 @@
 {% block title %}Dashboard — Sentry{% endblock %}
 {% block content %}
 
-<div class="page-head">
-  <div>
-    <h1>Dashboard</h1>
-    <p id="clock">&nbsp;</p>
-  </div>
-  <a href="/cameras" class="btn btn-primary">View cameras</a>
-</div>
-
 <div class="stats" style="margin-bottom: 24px;">
   <div class="stat">
     <div class="k">Cameras</div>
@@ -37,6 +29,16 @@
       {% else %}&mdash;{% endif %}
     </div>
     <div class="n">limit {{ storage.max_age_days }} days</div>
+  </div>
+  <div class="stat">
+    <div class="k">Disk</div>
+    <div class="v">{{ storage.disk_free | human_size }}</div>
+    <div class="n">free of {{ storage.disk_total | human_size }}</div>
+  </div>
+  <div class="stat">
+    <div class="k">Write rate</div>
+    <div class="v">{% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}{% else %}&mdash;{% endif %}</div>
+    <div class="n">per day &middot; last prune <span data-ts="{{ storage.last_run or '' }}">never</span></div>
   </div>
 </div>
 
@@ -96,82 +98,6 @@
     </div>
   </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h2>Storage</h2>
-    </div>
-    <div class="card-body">
-      <dl class="kv">
-        <div><dt>Disk free</dt><dd>{{ storage.disk_free | human_size }}</dd></div>
-        <div><dt>Disk total</dt><dd>{{ storage.disk_total | human_size }}</dd></div>
-        <div>
-          <dt>Write rate</dt>
-          <dd>
-            {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}/day
-            {% else %}measuring&hellip;{% endif %}
-          </dd>
-        </div>
-        <div>
-          <dt>Last prune</dt>
-          <dd data-ts="{{ storage.last_run or '' }}">never</dd>
-        </div>
-      </dl>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <h2>System</h2>
-      <a href="/settings" class="card-action">Settings &rarr;</a>
-    </div>
-    <div class="card-body">
-      <div class="list">
-        <div class="list-item" id="engine-row">
-          <span class="dot dot-warn"></span>
-          <div class="grow"><div class="title small">Stream engine</div>
-            <div class="sub">checking&hellip;</div></div>
-        </div>
-        {% for camera in cameras %}
-        <div class="list-item" data-camera="{{ camera.id }}">
-          <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
-          <div class="grow">
-            <div class="title small">{{ camera.name }}</div>
-            <div class="sub" data-rec-label data-until="{{ camera.record_until or '' }}">
-              {% if not camera.record %}Not recording
-              {% elif camera.record_until %}Recording until&hellip;
-              {% else %}Recording{% endif %}
-            </div>
-          </div>
-          {% if is_admin %}
-          <select class="rec-select" data-record-select
-                  aria-label="Recording for {{ camera.name }}">
-            <optgroup label="Continuous">
-              <option value="on"  {{ 'selected' if camera.record and not camera.record_until }}>Recording</option>
-              <option value="off" {{ 'selected' if not camera.record }}>Off</option>
-            </optgroup>
-            <optgroup label="Record for the next…">
-              <option value="1h">Hour</option>
-              <option value="24h">24 hours</option>
-              <option value="3d">3 days</option>
-              <option value="5d">5 days</option>
-            </optgroup>
-            {% if camera.record and camera.record_until %}
-            <option value="keep" selected>Timed window</option>
-            {% endif %}
-          </select>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-  </section>
-
-  <!--
-    Adding a panel: copy one <section class="card">, give it a heading and a
-    body. The grid reflows on its own; add class="card-wide" to span two
-    columns.
-  -->
-
 </div>
 
 {% endblock %}
@@ -180,17 +106,8 @@
 <script src="/static/live.js"></script>
 {% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
-function tick() {
-  document.getElementById('clock').textContent =
-    new Date().toLocaleString([], {
-      weekday: 'long', month: 'long', day: 'numeric',
-      hour: 'numeric', minute: '2-digit',
-    });
-}
-tick();
-setInterval(tick, 30000);
-
-document.querySelectorAll('dd[data-ts]').forEach(el => {
+// "Last prune" timestamp in the storage strip.
+document.querySelectorAll('[data-ts]').forEach(el => {
   const ts = parseFloat(el.dataset.ts);
   if (ts) el.textContent = new Date(ts * 1000).toLocaleTimeString([], {
     hour: 'numeric', minute: '2-digit',
@@ -202,73 +119,5 @@ initLiveTiles();
 
 // Virtual cameras: dewarp the parent stream to each saved angle in the browser.
 if (typeof initVirtualTiles === 'function') initVirtualTiles();
-
-const fmtUntil = ts => new Date(ts * 1000).toLocaleString([], {
-  month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-});
-
-// Turn the server-rendered "Recording until…" placeholder into a real local time.
-document.querySelectorAll('[data-rec-label][data-until]').forEach(el => {
-  const ts = parseFloat(el.dataset.until);
-  if (ts) el.textContent = `Recording until ${fmtUntil(ts)}`;
-});
-
-// Reflect the stream engine's state into its own row.
-(async function loadEngine() {
-  const row = document.getElementById('engine-row');
-  if (!row) return;
-  try {
-    const data = await (await fetch('/api/status')).json();
-    const ok = data.go2rtc_running;
-    row.querySelector('.dot').className = `dot ${ok ? 'dot-ok' : 'dot-bad'}`;
-    row.querySelector('.sub').textContent = ok ? 'Running' : 'Stopped';
-  } catch {
-    row.querySelector('.sub').textContent = 'Status unavailable';
-  }
-})();
-
-// Per-camera recording control.
-document.querySelectorAll('select[data-record-select]').forEach(select => {
-  const original = select.value;
-  select.addEventListener('change', async () => {
-    const mode = select.value;
-    if (mode === 'keep') return;  // the injected "current timed window" entry
-    const row = select.closest('[data-camera]');
-    const id = row.dataset.camera;
-    const label = row.querySelector('[data-rec-label]');
-    const dot = row.querySelector('.dot');
-    select.disabled = true;
-    try {
-      const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ record_mode: mode }),
-      });
-      if (!response.ok) throw new Error('patch failed');
-
-      // Reflect the new state without a full reload.
-      const windows = { '1h': 3600, '24h': 86400, '3d': 3 * 86400, '5d': 5 * 86400 };
-      const keep = row.querySelector('option[value="keep"]');
-      if (mode === 'off') {
-        label.textContent = 'Not recording';
-        dot.className = 'dot dot-bad';
-        if (keep) keep.remove();
-      } else if (mode === 'on') {
-        label.textContent = 'Recording';
-        dot.className = 'dot dot-ok';
-        if (keep) keep.remove();
-      } else if (windows[mode]) {
-        const until = Date.now() / 1000 + windows[mode];
-        label.textContent = `Recording until ${fmtUntil(until)}`;
-        dot.className = 'dot dot-ok';
-      }
-    } catch {
-      select.value = original;
-      label.textContent = 'Update failed — try again';
-    } finally {
-      select.disabled = false;
-    }
-  });
-});
 </script>
 {% endblock %}
