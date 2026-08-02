@@ -18,8 +18,8 @@
 </div>
 
 <div class="player" id="player"
-     data-stream="{{ stream_name }}"
-     data-sub="{{ sub_stream_name if camera.sub_url else '' }}">
+     data-stream-main="{{ stream_name }}"
+     data-stream-sub="{{ sub_stream_name if camera.sub_url else '' }}">
   <video id="video" autoplay muted playsinline></video>
   <img id="fallback" hidden alt="{{ camera.name }} live view">
   <div class="player-status" id="status"><span class="spinner"></span></div>
@@ -28,6 +28,9 @@
 <div class="toolbar">
   <button class="btn" id="mute-btn">Unmute</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
+  {% if camera.sub_url %}
+  <button class="btn" id="quality-btn"></button>
+  {% endif %}
   <span class="spacer"></span>
   <span class="muted small" id="mode-label"></span>
 </div>
@@ -77,13 +80,39 @@ document.querySelectorAll('#oldest, #newest').forEach(el => {
 });
 
 const player = document.getElementById('player');
+const mainStream = player.dataset.streamMain;
+const subStream = player.dataset.streamSub;
+
+// Live view defaults to the substream: it is far lighter and plays smoothly,
+// where a full-resolution main stream (e.g. a 6 MP fisheye) can overwhelm the
+// browser's WebRTC decoder. ?hd=1 opts into the main stream. With no
+// substream there is nothing to choose.
+const wantHd = new URLSearchParams(location.search).has('hd');
+const useMain = wantHd || !subStream;
+const liveStream = useMain ? mainStream : subStream;
+
 startLive({
-  stream: player.dataset.stream,
+  stream: liveStream,
   video: document.getElementById('video'),
   fallback: document.getElementById('fallback'),
   status: document.getElementById('status'),
   modeLabel: document.getElementById('mode-label'),
 });
+
+// Quality toggle: flip ?hd and reload, which tears the old session down cleanly.
+const qualityBtn = document.getElementById('quality-btn');
+if (qualityBtn) {
+  qualityBtn.textContent = useMain ? 'Full res: on' : 'Full res: off';
+  qualityBtn.title = useMain
+    ? 'Showing the main stream. Click for the lighter substream.'
+    : 'Showing the substream. Click for full resolution (heavier).';
+  qualityBtn.addEventListener('click', () => {
+    const url = new URL(location.href);
+    if (useMain) url.searchParams.delete('hd');
+    else url.searchParams.set('hd', '1');
+    location.href = url.toString();
+  });
+}
 
 const video = document.getElementById('video');
 const muteBtn = document.getElementById('mute-btn');
