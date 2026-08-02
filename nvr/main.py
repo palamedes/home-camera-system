@@ -670,6 +670,51 @@ async def api_create_virtual(parent_id: str, request: Request):
     return JSONResponse({"id": vid, "name": name})
 
 
+@app.get("/api/virtual/{vid}")
+def api_get_virtual(vid: int, request: Request):
+    v = db.virtual_camera(vid)
+    if not v:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    parent = db.camera(v["parent_id"])
+    if not parent or not can_view(request, parent):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    import json as _json
+
+    try:
+        calib = _json.loads(v["calib"]) if v["calib"] else {}
+    except (ValueError, TypeError):
+        calib = {}
+    return JSONResponse({
+        "id": v["id"], "name": v["name"], "parent_id": v["parent_id"],
+        "yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"], "calib": calib,
+    })
+
+
+@app.put("/api/virtual/{vid}")
+async def api_update_virtual(vid: int, request: Request):
+    if not db.virtual_camera(vid):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    import json as _json
+
+    fields: dict[str, Any] = {}
+    if "name" in payload and (payload.get("name") or "").strip():
+        fields["name"] = payload["name"].strip()
+    for key in ("yaw", "pitch", "fov"):
+        if key in payload:
+            fields[key] = float(payload[key])
+    if "calib" in payload:
+        fields["calib"] = _json.dumps(payload["calib"] or {})
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    assigns = ", ".join(f"{k} = ?" for k in fields)
+    db.execute(
+        f"UPDATE virtual_cameras SET {assigns} WHERE id = ?",
+        (*fields.values(), vid),
+    )
+    return JSONResponse({"ok": True})
+
+
 @app.delete("/api/virtual/{vid}")
 def api_delete_virtual(vid: int):
     if not db.virtual_camera(vid):

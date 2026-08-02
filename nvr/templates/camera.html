@@ -36,7 +36,10 @@
     <button data-view="pano">Pano</button>
   </div>
   <button class="btn" id="calib-btn" hidden>Calibrate</button>
+  {% if is_admin %}
   <button class="btn btn-primary" id="save-vcam-btn" hidden>Save as camera</button>
+  <button class="btn btn-danger" id="del-vcam-btn" hidden>Remove</button>
+  {% endif %}
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
@@ -164,16 +167,26 @@ const canvas = document.getElementById('dewarp');
 const modeButtons = document.getElementById('view-modes');
 const calibBtn = document.getElementById('calib-btn');
 const calibPanel = document.getElementById('calib-panel');
-const saveBtn = document.getElementById('save-vcam-btn');
+const saveBtn = document.getElementById('save-vcam-btn');   // may be null (viewers)
+const delBtn = document.getElementById('del-vcam-btn');
 const D2R = Math.PI / 180;
 
 const fisheye = initFisheye(liveOptions.video, canvas, {
   cameraId: {{ camera.id | tojson }},
   mode: 'single',
-  // Double-clicking a Quad/Dual tile focuses it to single — reflect that in
-  // the toolbar.
   onModeChange: m => updateModeUI(m),
 });
+
+// The virtual camera currently being edited (opened via ?vcam=), if any.
+let editing = null;
+
+function refreshSaveButton(m) {
+  if (!saveBtn) return;
+  const focused = m === 'single';
+  saveBtn.hidden = !focused;
+  if (delBtn) delBtn.hidden = !(focused && editing);
+  saveBtn.textContent = editing ? `Update ${editing.name}` : 'Save as camera';
+}
 
 function updateModeUI(m) {
   [...modeButtons.children].forEach(b =>
@@ -182,9 +195,7 @@ function updateModeUI(m) {
   canvas.hidden = !dewarping;
   calibBtn.hidden = !dewarping;
   if (!dewarping) calibPanel.hidden = true;
-  // Saving captures one aimed view, so it's offered once you've focused a
-  // single view (Dewarp, or a double-clicked Quad/Dual tile).
-  saveBtn.hidden = m !== 'single';
+  refreshSaveButton(m);
   const url = new URL(location.href);
   if (m === 'raw') url.searchParams.delete('view');
   else url.searchParams.set('view', m);
@@ -192,14 +203,23 @@ function updateModeUI(m) {
 }
 
 if (!fisheye) {
-  // WebGL unavailable — leave the raw video and hide the dewarp controls.
-  modeButtons.hidden = true;
+  modeButtons.hidden = true;   // WebGL unavailable — keep the raw video
 } else {
   const params = new URLSearchParams(location.search);
-  let current = params.get('view') || 'raw';
+
+  const set = sel => calibPanel.querySelector(`[data-cal="${sel}"]`);
+  function seedSliders(c) {
+    set('cx').value = c.cx;
+    set('cy').value = c.cy;
+    set('radius').value = c.radius;
+    set('fovDeg').value = Math.round(c.fovMax / D2R * 2);
+    set('rollDeg').value = Math.round(c.roll / D2R);
+    set('rotateDeg').value = Math.round((c.rotate || 0) / D2R);
+    set('equisolid').checked = c.proj === 1;
+    set('desk').checked = c.chirality < 0;
+  }
 
   function applyMode(m) {
-    current = m;
     if (m !== 'raw') fisheye.setMode(m);
     updateModeUI(m);
   }
@@ -209,47 +229,7 @@ if (!fisheye) {
     if (b) applyMode(b.dataset.view);
   });
 
-  saveBtn.addEventListener('click', async () => {
-    const name = prompt('Name this virtual camera (e.g. "Front door"):');
-    if (!name || !name.trim()) return;
-    const v = fisheye.activeView();
-    saveBtn.disabled = true;
-    try {
-      const r = await fetch(`/api/cameras/{{ camera.id }}/virtual`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          yaw: v.yaw, pitch: v.pitch, fov: v.fov,
-          calib: fisheye.getCalib(),
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (r.ok) {
-        if (confirm(`Saved "${name.trim()}". View it on the dashboard now?`)) {
-          location.href = '/';
-        }
-      } else {
-        alert(data.error || 'Could not save the virtual camera.');
-      }
-    } finally {
-      saveBtn.disabled = false;
-    }
-  });
-
   calibBtn.addEventListener('click', () => { calibPanel.hidden = !calibPanel.hidden; });
-
-  // Calibration sliders <-> the renderer's calib, seeded from saved values.
-  const cal = fisheye.getCalib();
-  const set = sel => calibPanel.querySelector(`[data-cal="${sel}"]`);
-  set('cx').value = cal.cx;
-  set('cy').value = cal.cy;
-  set('radius').value = cal.radius;
-  set('fovDeg').value = Math.round(cal.fovMax / D2R * 2);
-  set('rollDeg').value = Math.round(cal.roll / D2R);
-  set('rotateDeg').value = Math.round((cal.rotate || 0) / D2R);
-  set('equisolid').checked = cal.proj === 1;
-  set('desk').checked = cal.chirality < 0;
 
   calibPanel.addEventListener('input', () => {
     fisheye.setCalib({
@@ -263,18 +243,72 @@ if (!fisheye) {
       chirality: set('desk').checked ? -1 : 1,
     });
   });
-  document.getElementById('calib-reset').addEventListener('click', () => {
+  const resetBtn = document.getElementById('calib-reset');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
     fisheye.resetCalib();
-    const c = fisheye.getCalib();
-    set('cx').value = c.cx; set('cy').value = c.cy; set('radius').value = c.radius;
-    set('fovDeg').value = Math.round(c.fovMax / D2R * 2);
-    set('rollDeg').value = Math.round(c.roll / D2R);
-    set('rotateDeg').value = Math.round((c.rotate || 0) / D2R);
-    set('equisolid').checked = c.proj === 1;
-    set('desk').checked = c.chirality < 0;
+    seedSliders(fisheye.getCalib());
   });
 
-  if (current !== 'raw') applyMode(current);
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const v = fisheye.activeView();
+    const body = { yaw: v.yaw, pitch: v.pitch, fov: v.fov, calib: fisheye.getCalib() };
+    saveBtn.disabled = true;
+    try {
+      let r;
+      if (editing) {
+        // Update the camera we're already editing, in place.
+        r = await fetch(`/api/virtual/${editing.id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) alert(`Updated "${editing.name}".`);
+      } else {
+        const name = prompt('Name this virtual camera (e.g. "Front door"):');
+        if (!name || !name.trim()) return;
+        r = await fetch(`/api/cameras/{{ camera.id }}/virtual`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, name: name.trim() }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          editing = { id: data.id, name: name.trim() };  // further saves update it
+          refreshSaveButton(fisheye.getMode());
+          if (confirm(`Saved "${name.trim()}". View it on the dashboard now?`)) location.href = '/';
+        }
+      }
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not save.'); }
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  if (delBtn) delBtn.addEventListener('click', async () => {
+    if (!editing) return;
+    if (!confirm(`Remove the virtual camera "${editing.name}"?`)) return;
+    const r = await fetch(`/api/virtual/${editing.id}`, { method: 'DELETE' });
+    if (r.ok) location.href = '/';
+    else alert('Could not remove it.');
+  });
+
+  // Restore a saved virtual camera when opened via ?vcam=, else honour ?view.
+  async function boot() {
+    const vcamId = params.get('vcam');
+    if (vcamId) {
+      try {
+        const data = await (await fetch(`/api/virtual/${vcamId}`)).json();
+        if (data && data.calib) fisheye.setCalib(data.calib);
+        if (data) fisheye.setView({ yaw: data.yaw, pitch: data.pitch, fov: data.fov });
+        editing = { id: data.id, name: data.name };
+      } catch (_) { /* fall through to default */ }
+      seedSliders(fisheye.getCalib());
+      applyMode('single');
+      return;
+    }
+    seedSliders(fisheye.getCalib());
+    const current = params.get('view') || 'raw';
+    if (current !== 'raw') applyMode(current);
+  }
+  boot();
 }
 {% endif %}
 </script>

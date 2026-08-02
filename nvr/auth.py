@@ -152,7 +152,9 @@ class AuthMiddleware:
             admin_only = (
                 path.startswith("/api/users")
                 or path.startswith("/api/discover")
-                or path.startswith("/api/virtual")
+                # Reading a virtual camera (to restore its saved view) is fine
+                # for anyone who can see it; only changes need admin.
+                or (path.startswith("/api/virtual") and method != "GET")
                 or (path.startswith("/api/cameras") and method in ("POST", "PATCH", "DELETE"))
             )
             if admin_only:

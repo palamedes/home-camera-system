@@ -94,7 +94,7 @@
         {% for v in virtuals %}
         <div class="mini vcam" data-vcam data-stream="{{ v.stream }}"
              data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
-          <a class="mini-media vcam-media" href="/cameras/{{ v.parent_id }}?view=single"
+          <a class="mini-media vcam-media" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
              title="From {{ v.parent_name }}">
             {% if v.online %}
               <video muted playsinline></video><canvas></canvas>

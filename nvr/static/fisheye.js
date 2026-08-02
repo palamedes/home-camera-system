@@ -289,6 +289,10 @@
 
     function tick() {
       if (!running) return;
+      // Re-check size each frame so the canvas snaps to full resolution as
+      // soon as it's shown/laid out, instead of rendering tiny until a manual
+      // resize. resize() early-returns when nothing changed.
+      resize();
       if (video.readyState >= 2 && video.videoWidth) renderFrame();
       schedule();
     }
@@ -366,6 +370,7 @@
       getMode() { return mode; },
       activeIndex() { return activeView; },
       activeView() { return { ...views[activeView] }; },
+      setView(v) { views[activeView] = { ...views[activeView], ...v }; },
       setCalib(patch) { calib = { ...calib, ...patch }; if (persist) saveCalib(id, calib); },
       getCalib() { return { ...calib }; },
       resetCalib() { calib = { ...DEFAULT_CALIB }; if (persist) saveCalib(id, calib); },

@@ -83,7 +83,7 @@
   {% endfor %}
 
   {% for v in virtuals %}
-  <a class="tile vcam" href="/cameras/{{ v.parent_id }}?view=single"
+  <a class="tile vcam" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
      data-vcam data-stream="{{ v.stream }}"
      data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
     <div class="tile-media vcam-media">
