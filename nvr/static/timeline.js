@@ -20,7 +20,6 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   const status = document.getElementById('status');
   const playheadLabel = document.getElementById('playhead-label');
   const spanSelect = document.getElementById('span');
-  const downloadBtn = document.getElementById('download-btn');
 
   const MIN_SPAN = 300;        // 5 minutes, the tightest zoom
   const MAX_SPAN = 7 * 86400;  // 7 days
@@ -182,7 +181,6 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     video.src = `/api/cameras/${encodeURIComponent(cameraId)}/playback.mp4`
       + `?start=${ts}&duration=${CHUNK_SECONDS}`;
     video.play().catch(() => { /* autoplay refusal is fine; controls are shown */ });
-    downloadBtn.disabled = false;
     if (announce) playheadLabel.textContent = `Playing from ${fmtFull(ts)}`;
     draw();
   }
@@ -431,13 +429,6 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     windowSpan = parseInt(spanSelect.value, 10);
     loadCoverage();
     draw();
-  });
-
-  downloadBtn.addEventListener('click', () => {
-    if (chunkStart === null) return;
-    const at = Math.floor(chunkStart + (video.currentTime || 0));
-    window.location = `/api/cameras/${encodeURIComponent(cameraId)}/clip.mp4`
-      + `?start=${at}&duration=60`;
   });
 
   window.addEventListener('resize', resize);
