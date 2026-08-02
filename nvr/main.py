@@ -392,10 +392,12 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     cameras = camera_view_models(request)
+    grid = [c for c in cameras if c["show_on_grid"]]
     return render(
         request, "dashboard.html",
-        cameras=cameras,
+        grid=grid,
         virtuals=virtual_view_models(request),
+        total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
         storage=retention.estimate(),
@@ -404,9 +406,12 @@ def dashboard(request: Request):
 
 @app.get("/cameras", response_class=HTMLResponse)
 def cameras_page(request: Request):
+    cameras = camera_view_models(request)
     return render(
         request, "cameras.html",
-        cameras=camera_view_models(request),
+        cameras=[c for c in cameras if c["show_on_grid"]],
+        total=len(cameras),
+        virtuals=virtual_view_models(request),
         storage=retention.estimate(),
     )
 
@@ -414,7 +419,8 @@ def cameras_page(request: Request):
 @app.get("/wall", response_class=HTMLResponse)
 def wall(request: Request):
     """Chromeless video wall: every camera tiled to fill the viewport."""
-    return render(request, "wall.html", cameras=camera_view_models(request))
+    cameras = [c for c in camera_view_models(request) if c["show_on_grid"]]
+    return render(request, "wall.html", cameras=cameras)
 
 
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)
@@ -610,11 +616,11 @@ async def api_update_camera(camera_id: str, request: Request):
 
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
                "username", "password", "record_until", "retention_seconds",
-               "fisheye", "viewer_visible"}
+               "fisheye", "viewer_visible", "show_on_grid"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
-    for flag in ("record", "enabled", "fisheye", "viewer_visible"):
+    for flag in ("record", "enabled", "fisheye", "viewer_visible", "show_on_grid"):
         if flag in fields:
             fields[flag] = 1 if fields[flag] else 0
     db.update_camera(camera_id, **fields)

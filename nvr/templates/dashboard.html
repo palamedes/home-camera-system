@@ -13,8 +13,8 @@
 <div class="stats" style="margin-bottom: 24px;">
   <div class="stat">
     <div class="k">Cameras</div>
-    <div class="v">{{ online }} / {{ cameras|length }}</div>
-    <div class="n">{{ 'online' if cameras else 'none configured' }}</div>
+    <div class="v">{{ online }} / {{ total }}</div>
+    <div class="n">{{ 'online' if total else 'none configured' }}</div>
   </div>
   <div class="stat">
     <div class="k">Recording</div>
@@ -48,9 +48,9 @@
       <a href="/cameras" class="card-action">View all &rarr;</a>
     </div>
     <div class="card-body">
-      {% if cameras %}
+      {% if grid %}
       <div class="mini-grid">
-        {% for camera in cameras[:4] %}
+        {% for camera in grid[:4] %}
         <a class="mini" href="/cameras/{{ camera.id }}">
           <div class="mini-media">
             {% if camera.online %}
@@ -69,15 +69,15 @@
         </a>
         {% endfor %}
       </div>
-      {% if cameras|length > 4 %}
+      {% if grid|length > 4 %}
       <p class="muted small" style="margin: 12px 0 0;">
-        and {{ cameras|length - 4 }} more
+        and {{ grid|length - 4 }} more
       </p>
       {% endif %}
       {% else %}
       <div class="card-empty">
-        <p class="muted">No cameras yet.</p>
-        <a href="/discover" class="btn btn-sm">Scan the network</a>
+        <p class="muted">{{ 'All cameras are hidden from the grid.' if total else 'No cameras yet.' }}</p>
+        {% if not total %}<a href="/discover" class="btn btn-sm">Scan the network</a>{% endif %}
       </div>
       {% endif %}
     </div>

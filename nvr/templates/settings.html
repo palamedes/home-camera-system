@@ -84,6 +84,11 @@
         <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera">360°</label>
       </div>
       <div class="checkbox">
+        <input type="checkbox" id="grid-{{ camera.id }}" data-toggle="show_on_grid"
+               {{ 'checked' if camera.show_on_grid }}>
+        <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page">On grid</label>
+      </div>
+      <div class="checkbox">
         <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible"
                {{ 'checked' if camera.viewer_visible }}>
         <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>

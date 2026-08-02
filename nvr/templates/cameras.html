@@ -5,7 +5,7 @@
 <div class="page-head">
   <div>
     <h1>Cameras</h1>
-    <p>{{ cameras|length }} camera{{ '' if cameras|length == 1 else 's' }} configured</p>
+    <p>{{ total }} camera{{ '' if total == 1 else 's' }}{% if virtuals %} &middot; {{ virtuals|length }} virtual{% endif %}</p>
   </div>
   <div class="row" style="flex: 0 0 auto;">
     {% if cameras %}<a href="/wall" class="btn">Wall view</a>{% endif %}
@@ -13,7 +13,7 @@
   </div>
 </div>
 
-{% if cameras %}
+{% if cameras or virtuals %}
 <div class="stats" style="margin-bottom: 22px;">
   <div class="stat">
     <div class="k">Recorded</div>
@@ -81,6 +81,28 @@
     </div>
   </a>
   {% endfor %}
+
+  {% for v in virtuals %}
+  <a class="tile vcam" href="/cameras/{{ v.parent_id }}?view=single"
+     data-vcam data-stream="{{ v.stream }}"
+     data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+    <div class="tile-media vcam-media">
+      {% if v.online %}
+        <video muted playsinline></video><canvas></canvas>
+        <span class="badge" style="left: auto; right: 9px;">virtual</span>
+      {% else %}
+        <div class="placeholder">Parent offline</div>
+      {% endif %}
+    </div>
+    <div class="tile-body">
+      <div class="tile-name">
+        <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
+        <span class="truncate">{{ v.name }}</span>
+      </div>
+      <div class="tile-meta"><span>from {{ v.parent_name }}</span></div>
+    </div>
+  </a>
+  {% endfor %}
 </div>
 
 {% else %}
@@ -95,10 +117,12 @@
 
 {% block scripts %}
 <script src="/static/live.js"></script>
+{% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 // Live substream video per tile. The sub is low-res and passes through as
 // H.264 with no server transcode, so a wall of them stays cheap; each tile
 // keeps its snapshot as the poster and falls back to it if the stream drops.
 initLiveTiles();
+if (typeof initVirtualTiles === 'function') initVirtualTiles();
 </script>
 {% endblock %}

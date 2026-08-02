@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS cameras (
     fisheye       INTEGER NOT NULL DEFAULT 0,
     -- 1 if non-admin "viewer" accounts may see this camera at all.
     viewer_visible INTEGER NOT NULL DEFAULT 1,
+    -- 1 if the raw camera tile appears on the dashboard/Cameras grids. A 360
+    -- can be hidden here while its virtual cameras still show.
+    show_on_grid  INTEGER NOT NULL DEFAULT 1,
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    INTEGER NOT NULL,
     last_seen     INTEGER
@@ -119,6 +122,7 @@ class Database:
             "retention_seconds": "ALTER TABLE cameras ADD COLUMN retention_seconds INTEGER",
             "fisheye": "ALTER TABLE cameras ADD COLUMN fisheye INTEGER NOT NULL DEFAULT 0",
             "viewer_visible": "ALTER TABLE cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1",
+            "show_on_grid": "ALTER TABLE cameras ADD COLUMN show_on_grid INTEGER NOT NULL DEFAULT 1",
         }
         for column, statement in additions.items():
             if column not in have:
