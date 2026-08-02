@@ -58,12 +58,12 @@
     uniform float u_rotate;   // roll of the rendered picture around its view axis
     void main() {
       float t = tan(u_fov * 0.5);
-      vec3 dir = normalize(vec3(v_ndc.x * t * u_aspect, v_ndc.y * t, 1.0));
-      // Rotate the output image: spin the ray around the viewing (z) axis
-      // before pan/tilt. Purely cosmetic — straightens a tilted picture.
+      vec3 vd = vec3(v_ndc.x * t * u_aspect, v_ndc.y * t, 1.0);
+      // Rotate the output image around the view axis (cosmetic straighten).
       float cr = cos(u_rotate), sr = sin(u_rotate);
-      dir = vec3(dir.x * cr - dir.y * sr, dir.x * sr + dir.y * cr, dir.z);
-      dir = u_rot * dir;
+      vd = vec3(vd.x * cr - vd.y * sr, vd.x * sr + vd.y * cr, vd.z);
+      // u_rot is a look-at basis (right, up, forward) — no gimbal roll.
+      vec3 dir = normalize(u_rot * vd);
       float theta = acos(clamp(dir.z, -1.0, 1.0));
       float phi = atan(dir.y, dir.x);
       gl_FragColor = sampleFisheye(theta, phi);
@@ -88,7 +88,7 @@
 
   const DEFAULT_CALIB = {
     cx: 0.5, cy: 0.5, radius: 0.5,
-    fovMax: 100 * D2R,      // 200-degree lens
+    fovMax: 90 * D2R,      // 180-degree lens; raise if the far edges go black
     proj: 1,               // equisolid (Reolink)
     chirality: 1,          // ceiling mount
     roll: 0,               // azimuth of the fisheye sampling (scene geometry)
@@ -122,15 +122,26 @@
     return p;
   }
 
-  // Column-major mat3 for M = R_yaw(Y) * R_pitch(X).
-  function rotYawPitch(yaw, pitch) {
+  // Look-at basis (right, up, forward) as a column-major mat3.
+  //
+  // yaw pans around the fisheye's optical axis (+Z); pitch is elevation, 0 at
+  // the equator (walls/horizon) rising toward +Z (nadir, straight down for a
+  // ceiling mount). The "up" of the view is derived from the axis rather than
+  // a fixed Euler order, so the horizon stays level and dragging never rolls
+  // the picture — the failure mode of the old yaw*pitch matrix near the pole.
+  function orientation(yaw, pitch) {
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
     const cp = Math.cos(pitch), sp = Math.sin(pitch);
-    return new Float32Array([
-      cy, 0, -sy,
-      sy * sp, cp, cy * sp,
-      sy * cp, -sp, cy * cp,
-    ]);
+    const f = [cp * sy, cp * cy, sp];            // forward
+    // right = normalize(cross(+Z, forward)) = normalize((-f.y, f.x, 0))
+    let rx = -f[1], ry = f[0], rz = 0;
+    const rl = Math.hypot(rx, ry, rz) || 1;
+    rx /= rl; ry /= rl; rz /= rl;
+    // up = cross(right, forward) — points toward the axis so verticals are upright
+    const ux = ry * f[2] - rz * f[1];
+    const uy = rz * f[0] - rx * f[2];
+    const uz = rx * f[1] - ry * f[0];
+    return new Float32Array([rx, ry, rz, ux, uy, uz, f[0], f[1], f[2]]);
   }
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -176,11 +187,13 @@
 
     // Virtual views. Quad uses four; dual the first two; single shows the
     // active one. Seeded from opts.view when provided (fixed dashboard tiles).
+    // Default pitch 0 = looking at the horizon, so a wall/door is centered and
+    // upright rather than skewed.
     const views = [
-      { yaw: 0, pitch: 0.6, fov: 90 * D2R },
-      { yaw: Math.PI / 2, pitch: 0.6, fov: 90 * D2R },
-      { yaw: Math.PI, pitch: 0.6, fov: 90 * D2R },
-      { yaw: -Math.PI / 2, pitch: 0.6, fov: 90 * D2R },
+      { yaw: 0, pitch: 0, fov: 90 * D2R },
+      { yaw: Math.PI / 2, pitch: 0, fov: 90 * D2R },
+      { yaw: Math.PI, pitch: 0, fov: 90 * D2R },
+      { yaw: -Math.PI / 2, pitch: 0, fov: 90 * D2R },
     ];
     if (opts.view) views[0] = { ...views[0], ...opts.view };
 
@@ -261,7 +274,7 @@
         const v = views[vp.view];
         gl.viewport(vp.x, vp.y, vp.w, vp.h);
         gl.scissor(vp.x, vp.y, vp.w, vp.h);
-        gl.uniformMatrix3fv(rectLoc.rot, false, rotYawPitch(v.yaw, v.pitch));
+        gl.uniformMatrix3fv(rectLoc.rot, false, orientation(v.yaw, v.pitch));
         gl.uniform1f(rectLoc.fov, v.fov);
         gl.uniform1f(rectLoc.aspect, vp.w / vp.h);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -323,8 +336,9 @@
         if (!drag) return;
         const v = drag.view;
         const k = v.fov / canvas.clientHeight;   // radians per pixel — zoom-aware
+        // Drag right pans right; drag down tilts the view downward.
         v.yaw += (e.clientX - drag.x) * k;
-        v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+        v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -0.35, Math.PI / 2 - 0.05);
         drag.x = e.clientX; drag.y = e.clientY;
       });
       const endDrag = () => { drag = null; };

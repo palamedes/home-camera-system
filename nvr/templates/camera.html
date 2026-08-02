@@ -46,23 +46,33 @@
 
 {% if camera.fisheye %}
 <div class="calib-panel panel panel-pad" id="calib-panel" hidden>
+  <p class="muted small" style="margin: 0 0 12px;">
+    <strong>Drag</strong> the picture to look around &middot; <strong>scroll</strong> to zoom &middot;
+    in Dual/Quad, <strong>double-click</strong> a view to focus it.
+  </p>
   <div class="calib-grid">
-    <label>Center X <input type="range" min="0.3" max="0.7" step="0.005" data-cal="cx"></label>
-    <label>Center Y <input type="range" min="0.3" max="0.7" step="0.005" data-cal="cy"></label>
-    <label>Radius <input type="range" min="0.3" max="0.55" step="0.005" data-cal="radius"></label>
-    <label>Lens FoV <input type="range" min="140" max="220" step="1" data-cal="fovDeg"></label>
-    <label>Level (roll) <input type="range" min="-180" max="180" step="1" data-cal="rollDeg"></label>
     <label>Rotate picture <input type="range" min="-180" max="180" step="1" data-cal="rotateDeg"></label>
   </div>
-  <div class="calib-row">
-    <label class="checkbox"><input type="checkbox" data-cal="equisolid"> Equisolid lens</label>
-    <label class="checkbox"><input type="checkbox" data-cal="desk"> Desk/floor mount (mirror)</label>
-    <span class="spacer"></span>
-    <button class="btn btn-sm" id="calib-reset">Reset</button>
-  </div>
-  <p class="muted small" style="margin: 10px 0 0;">
-    Adjust until straight lines look straight and the horizon is level. Saved per camera in this browser.
-  </p>
+  <details class="calib-advanced">
+    <summary>Advanced lens calibration</summary>
+    <p class="muted small" style="margin: 10px 0 12px;">
+      Set these once per camera. Radius/Center should make the circular image
+      fill the frame; raise <em>Lens FoV</em> only if the far edges go black.
+    </p>
+    <div class="calib-grid">
+      <label>Center X <input type="range" min="0.3" max="0.7" step="0.005" data-cal="cx"></label>
+      <label>Center Y <input type="range" min="0.3" max="0.7" step="0.005" data-cal="cy"></label>
+      <label>Radius <input type="range" min="0.3" max="0.55" step="0.005" data-cal="radius"></label>
+      <label>Lens FoV <input type="range" min="150" max="240" step="1" data-cal="fovDeg"></label>
+      <label>Level (roll) <input type="range" min="-180" max="180" step="1" data-cal="rollDeg"></label>
+    </div>
+    <div class="calib-row">
+      <label class="checkbox"><input type="checkbox" data-cal="equisolid"> Equisolid lens</label>
+      <label class="checkbox"><input type="checkbox" data-cal="desk"> Desk/floor mount (mirror)</label>
+      <span class="spacer"></span>
+      <button class="btn btn-sm" id="calib-reset">Reset all</button>
+    </div>
+  </details>
 </div>
 {% endif %}
 
