@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS cameras (
     record_until  REAL,
     -- Per-camera retention in seconds; NULL falls back to the global limit.
     retention_seconds INTEGER,
+    -- 1 if this is a 360/fisheye camera (auto-detected, admin-overridable).
+    fisheye       INTEGER NOT NULL DEFAULT 0,
+    -- 1 if non-admin "viewer" accounts may see this camera at all.
+    viewer_visible INTEGER NOT NULL DEFAULT 1,
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    INTEGER NOT NULL,
     last_seen     INTEGER
@@ -97,6 +101,8 @@ class Database:
         additions = {
             "record_until": "ALTER TABLE cameras ADD COLUMN record_until REAL",
             "retention_seconds": "ALTER TABLE cameras ADD COLUMN retention_seconds INTEGER",
+            "fisheye": "ALTER TABLE cameras ADD COLUMN fisheye INTEGER NOT NULL DEFAULT 0",
+            "viewer_visible": "ALTER TABLE cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1",
         }
         for column, statement in additions.items():
             if column not in have:

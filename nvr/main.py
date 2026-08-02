@@ -77,6 +77,24 @@ def render(
     )
 
 
+def detect_fisheye(model: str | None, width: int | None, height: int | None) -> bool:
+    """Guess whether a camera is a 360/fisheye.
+
+    A single-sensor fisheye renders a circular image on a square frame, so a
+    ~1:1 aspect ratio is the strong signal; the model name (Reolink's "FE"
+    series, or any 'fisheye'/'360'/'panoramic') corroborates it. The admin can
+    override either way with the per-camera checkbox.
+    """
+    text = (model or "").lower()
+    if any(k in text for k in ("fisheye", "360", "panoram", "fe-", "fe ")):
+        return True
+    if width and height:
+        ratio = width / height
+        if 0.9 <= ratio <= 1.1:
+            return True
+    return False
+
+
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug or "camera"
@@ -312,9 +330,22 @@ def api_delete_user(user_id: int, request: Request):
 # ---------------------------------------------------------------------------
 
 
-def camera_view_models() -> list[dict[str, Any]]:
-    """Camera rows decorated with live status, for the dashboard and grid."""
-    cameras = [dict(row) for row in db.cameras()]
+def can_view(request: Request, camera: Any) -> bool:
+    """Whether the current user may see a given camera.
+
+    Admins see everything; viewers see only cameras flagged viewer_visible.
+    """
+    if auth.is_admin(auth.current_user(request)):
+        return True
+    return bool(camera["viewer_visible"])
+
+
+def camera_view_models(request: Request) -> list[dict[str, Any]]:
+    """Camera rows decorated with live status, for the dashboard and grid.
+
+    Filtered to what the current user is allowed to see.
+    """
+    cameras = [dict(row) for row in db.cameras() if can_view(request, row)]
     status = go2rtc.stream_status()
     recorder_status = recording.status()
     for camera in cameras:
@@ -327,7 +358,7 @@ def camera_view_models() -> list[dict[str, Any]]:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    cameras = camera_view_models()
+    cameras = camera_view_models(request)
     return render(
         request, "dashboard.html",
         cameras=cameras,
@@ -341,7 +372,7 @@ def dashboard(request: Request):
 def cameras_page(request: Request):
     return render(
         request, "cameras.html",
-        cameras=camera_view_models(),
+        cameras=camera_view_models(request),
         storage=retention.estimate(),
     )
 
@@ -349,13 +380,13 @@ def cameras_page(request: Request):
 @app.get("/wall", response_class=HTMLResponse)
 def wall(request: Request):
     """Chromeless video wall: every camera tiled to fill the viewport."""
-    return render(request, "wall.html", cameras=camera_view_models())
+    return render(request, "wall.html", cameras=camera_view_models(request))
 
 
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)
 def camera_page(request: Request, camera_id: str):
     camera = db.camera(camera_id)
-    if not camera:
+    if not camera or not can_view(request, camera):
         return render(request, "404.html", status_code=404)
     return render(
         request, "camera.html",
@@ -370,7 +401,7 @@ def camera_page(request: Request, camera_id: str):
 @app.get("/cameras/{camera_id}/history", response_class=HTMLResponse)
 def history_page(request: Request, camera_id: str):
     camera = db.camera(camera_id)
-    if not camera:
+    if not camera or not can_view(request, camera):
         return render(request, "404.html", status_code=404)
     bounds = db.segment_bounds(camera_id)
     return render(
@@ -408,13 +439,22 @@ def settings_page(request: Request):
 # ---------------------------------------------------------------------------
 
 
+# Never sent to the browser: the RTSP URLs embed the camera password, and the
+# credentials themselves have no client use — go2rtc holds them server-side.
+_CAMERA_SECRET_FIELDS = ("password", "username", "main_url", "sub_url")
+
+
 @app.get("/api/cameras")
-def api_cameras():
+def api_cameras(request: Request):
     status = go2rtc.stream_status()
     result = []
     for row in db.cameras():
+        if not can_view(request, row):
+            continue
         camera = dict(row)
-        camera.pop("password", None)
+        for field in _CAMERA_SECRET_FIELDS:
+            camera.pop(field, None)
+        camera["has_sub"] = bool(row["sub_url"])
         info = status.get(streams.main_stream_name(camera["id"]))
         camera["online"] = streams.stream_online(info)
         camera["stats"] = db.camera_stats(camera["id"])
@@ -470,6 +510,14 @@ async def api_add_camera(request: Request):
             status_code=400,
         )
 
+    # Auto-flag 360 cameras from the probed frame shape and the model name.
+    # The admin can override this later with the per-camera checkbox.
+    fisheye = payload.get("fisheye")
+    if fisheye is None:
+        fisheye = detect_fisheye(
+            payload.get("model"), check.get("width"), check.get("height")
+        )
+
     camera_id = unique_camera_id(name)
     db.add_camera(
         id=camera_id,
@@ -486,6 +534,7 @@ async def api_add_camera(request: Request):
         sub_url=(payload.get("sub_url") or "").strip() or None,
         record=1 if payload.get("record", True) else 0,
         record_stream=payload.get("record_stream") or "main",
+        fisheye=1 if fisheye else 0,
         enabled=1,
         last_seen=int(time.time()),
     )
@@ -526,11 +575,12 @@ async def api_update_camera(camera_id: str, request: Request):
         return JSONResponse({"error": f"unknown record_mode {mode!r}"}, status_code=400)
 
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
-               "username", "password", "record_until", "retention_seconds"}
+               "username", "password", "record_until", "retention_seconds",
+               "fisheye", "viewer_visible"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
-    for flag in ("record", "enabled"):
+    for flag in ("record", "enabled", "fisheye", "viewer_visible"):
         if flag in fields:
             fields[flag] = 1 if fields[flag] else 0
     db.update_camera(camera_id, **fields)
@@ -554,8 +604,9 @@ def api_delete_camera(camera_id: str, purge: bool = False):
 
 
 @app.get("/api/cameras/{camera_id}/snapshot.jpg")
-def api_snapshot(camera_id: str):
-    if not db.camera(camera_id):
+def api_snapshot(request: Request, camera_id: str):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
         return Response("not found", status_code=404)
     frame = go2rtc.snapshot(camera_id)
     if not frame:
@@ -573,8 +624,9 @@ def api_snapshot(camera_id: str):
 
 
 @app.get("/api/cameras/{camera_id}/timeline")
-def api_timeline(camera_id: str, start: float, end: float):
-    if not db.camera(camera_id):
+def api_timeline(request: Request, camera_id: str, start: float, end: float):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
         return JSONResponse({"error": "not found"}, status_code=404)
     if end <= start:
         return JSONResponse({"error": "end must be after start"}, status_code=400)
@@ -590,8 +642,9 @@ def api_timeline(camera_id: str, start: float, end: float):
 
 
 @app.get("/api/cameras/{camera_id}/playback.mp4")
-def api_playback(camera_id: str, start: float, duration: float = 300.0):
-    if not db.camera(camera_id):
+def api_playback(request: Request, camera_id: str, start: float, duration: float = 300.0):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
         return Response("not found", status_code=404)
     duration = max(1.0, min(duration, 3600.0))
     try:
@@ -606,8 +659,9 @@ def api_playback(camera_id: str, start: float, duration: float = 300.0):
 
 
 @app.get("/api/cameras/{camera_id}/clip.mp4")
-def api_clip(camera_id: str, start: float, duration: float = 60.0):
-    if not db.camera(camera_id):
+def api_clip(request: Request, camera_id: str, start: float, duration: float = 60.0):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
         return Response("not found", status_code=404)
     duration = max(1.0, min(duration, 1800.0))
     try:
@@ -659,4 +713,13 @@ def api_status():
 
 @app.api_route("/go2rtc/{path:path}", methods=["GET", "POST"])
 async def go2rtc_proxy(request: Request, path: str):
+    # Live video (WebRTC, MJPEG, frames) is addressed by a `src` stream name.
+    # A viewer must not be able to pull a camera they're not allowed to see by
+    # naming its stream directly, so resolve src -> camera and check access.
+    src = request.query_params.get("src")
+    if src and not auth.is_admin(auth.current_user(request)):
+        camera_id = src[:-4] if src.endswith("_sub") else src
+        camera = db.camera(camera_id)
+        if not camera or not can_view(request, camera):
+            return Response("forbidden", status_code=403)
     return await proxy.forward(request, path, cfg)

@@ -37,8 +37,9 @@
 </div>
 
 <div class="panel">
-  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
     <h2 style="margin: 0; font-size: 16px;">Cameras</h2>
+    <a class="btn btn-sm btn-primary" href="/discover">Add camera</a>
   </div>
   <div class="list">
     {% set retentions = [
@@ -76,6 +77,16 @@
         <input type="checkbox" id="rec-{{ camera.id }}" data-toggle="record"
                {{ 'checked' if camera.record }}>
         <label for="rec-{{ camera.id }}">Record</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye"
+               {{ 'checked' if camera.fisheye }}>
+        <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera">360°</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible"
+               {{ 'checked' if camera.viewer_visible }}>
+        <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
       </div>
       <a class="btn btn-sm" href="/cameras/{{ camera.id }}">View</a>
       <button class="btn btn-sm btn-danger" data-delete>Remove</button>
@@ -241,16 +252,22 @@
   });
 })();
 
-document.querySelectorAll('[data-toggle="record"]').forEach(box => {
+// One handler for every per-camera boolean: the data-toggle value is the
+// field name (record / fisheye / viewer_visible).
+document.querySelectorAll('[data-toggle]').forEach(box => {
   box.addEventListener('change', async () => {
     const id = box.closest('[data-camera]').dataset.camera;
+    const field = box.dataset.toggle;
     box.disabled = true;
     try {
-      await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ record: box.checked }),
+        body: JSON.stringify({ [field]: box.checked }),
       });
+      if (!r.ok) box.checked = !box.checked;  // revert on failure
+    } catch {
+      box.checked = !box.checked;
     } finally {
       box.disabled = false;
     }

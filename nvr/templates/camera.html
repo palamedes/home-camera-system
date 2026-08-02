@@ -5,7 +5,7 @@
 
 <div class="page-head">
   <div>
-    <h1>{{ camera.name }}</h1>
+    <h1>{{ camera.name }}{% if camera.fisheye %} <span class="tag-360">360°</span>{% endif %}</h1>
     <p>
       {{ camera.model or camera.brand or 'Camera' }} &middot;
       <span class="mono">{{ camera.host }}</span>

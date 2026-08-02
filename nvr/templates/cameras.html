@@ -57,6 +57,7 @@
                data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
                muted playsinline></video>
         {% if camera.record %}<span class="badge badge-rec">REC</span>{% endif %}
+        {% if camera.fisheye %}<span class="badge" style="left: auto; right: 9px;">360°</span>{% endif %}
       {% else %}
         <div class="placeholder">
           {% if camera.recorder.last_error %}
