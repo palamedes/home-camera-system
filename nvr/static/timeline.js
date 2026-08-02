@@ -216,31 +216,63 @@ function initHistory({ cameraId, bounds }) {
 
   // ---- interaction ------------------------------------------------------
 
-  // A press that moves more than a few pixels is a region drag; otherwise it's
-  // a click to seek. This keeps one pointer doing both jobs on the timeline.
+  // A plain press: click to seek, or drag past a threshold to select a region
+  // for export. Holding Ctrl (or Cmd) instead turns the drag into a scrub —
+  // the video follows the cursor so you can sweep through footage to find a
+  // moment.
   const DRAG_THRESHOLD = 4;
-  let press = null;  // { x, time, dragging }
+  let press = null;  // { x, time, dragging, scrub }
 
   const localX = event => event.clientX - canvas.getBoundingClientRect().left;
+  const isScrubKey = event => event.ctrlKey || event.metaKey;
+
+  // Scrubbing that stays inside the loaded 5-min chunk seeks instantly; moving
+  // outside it loads the chunk under the cursor, throttled so a fast drag
+  // doesn't fire a request every pixel.
+  let lastScrubLoad = 0;
+  function scrubTo(t) {
+    t = Math.max(bounds.start, Math.min(bounds.end, t));
+    if (chunkStart !== null && t >= chunkStart && t < chunkStart + CHUNK_SECONDS
+        && video.readyState >= 1) {
+      video.currentTime = Math.max(0, t - chunkStart);
+    } else {
+      const now = (window.performance && performance.now()) || Date.now();
+      if (now - lastScrubLoad > 180) {
+        lastScrubLoad = now;
+        playFrom(Math.floor(t), { announce: false });
+      }
+    }
+    playheadLabel.textContent = `Scrubbing ${fmtFull(t)}`;
+    draw();
+  }
 
   canvas.addEventListener('mousedown', event => {
-    press = { x: localX(event), time: xToTime(localX(event)), dragging: false };
+    press = {
+      x: localX(event), time: xToTime(localX(event)),
+      dragging: false, scrub: isScrubKey(event),
+    };
+    if (press.scrub) { event.preventDefault(); scrubTo(press.time); }
   });
 
   canvas.addEventListener('mousemove', event => {
     const x = localX(event);
     hoverX = x;
     canvas.title = fmtTime(xToTime(x));
+    canvas.style.cursor = isScrubKey(event) ? 'ew-resize' : 'pointer';
     if (press) {
       if (Math.abs(x - press.x) > DRAG_THRESHOLD) press.dragging = true;
-      if (press.dragging) selection = { start: press.time, end: xToTime(x) };
+      if (press.scrub) scrubTo(xToTime(x));
+      else if (press.dragging) selection = { start: press.time, end: xToTime(x) };
     }
     draw();
   });
 
   window.addEventListener('mouseup', event => {
     if (!press) return;
-    if (press.dragging && selection) {
+    if (press.scrub) {
+      // Settle on the release point.
+      playFrom(Math.floor(xToTime(localX(event))));
+    } else if (press.dragging && selection) {
       // Normalise and clamp the selected span, then reveal the export bar.
       let [a, b] = [selection.start, selection.end].sort((x, y) => x - y);
       if (b - a > MAX_EXPORT) b = a + MAX_EXPORT;
