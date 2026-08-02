@@ -73,6 +73,105 @@
   </div>
 </div>
 
+<details class="reference">
+  <summary>Buying a camera? How to check it'll work first</summary>
+  <div class="reference-body">
+    <p class="muted small">
+      Vendor "ONVIF compatible" claims are marketing. Before you buy, verify
+      the model actually streams — roughly in this order.
+    </p>
+
+    <div class="ref-grid">
+      <section>
+        <h4>Authoritative</h4>
+        <ul>
+          <li><a href="https://www.onvif.org/conformant-products/" target="_blank" rel="noopener">onvif.org/conformant-products</a>
+            — the only real ONVIF source; shows certified profiles. Registered
+            per exact model string (RLC-811A ≠ RLC-811WA), and new models lag
+            by months, so absence isn't proof.</li>
+          <li><strong>Prefer Profile T.</strong> It's the one that guarantees
+            H.264 <em>and</em> H.265 streaming plus motion/tampering metadata.
+            Profile S is the older, thinner baseline (H.264 only, no analytics
+            metadata) — fine, but Profile T is what you want for an NVR.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>Does it actually stream</h4>
+        <ul>
+          <li><a href="https://www.ispyconnect.com/cameras" target="_blank" rel="noopener">ispyconnect.com/camera/[brand]</a>
+            — Agent DVR's database of real, working RTSP paths and ports. The
+            most useful check: entries mean someone has it running.</li>
+          <li><a href="https://docs.frigate.video/" target="_blank" rel="noopener">docs.frigate.video</a>
+            + its GitHub issues/discussions — same setup you're building;
+            search the model number for known quirks.</li>
+          <li><a href="https://github.com/AlexxIT/go2rtc/issues" target="_blank" rel="noopener">github.com/AlexxIT/go2rtc</a>
+            issues — the same, with protocol-level detail.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://ipcamtalk.com/" target="_blank" rel="noopener">ipcamtalk.com</a>
+            — enthusiast forum with long per-model threads; use its own search.</li>
+          <li>Reddit: r/homesecurity, r/frigate_nvr, r/BlueIris,
+            r/homeassistant — search "[model] rtsp" / "[model] onvif".</li>
+          <li><a href="https://www.scrypted.app/" target="_blank" rel="noopener">Scrypted</a>
+            supported devices — handy cross-reference.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>Vendor</h4>
+        <ul>
+          <li>Reolink publishes "Which Reolink Products Support
+            CGI/RTSP/ONVIF" — a model-by-model table. Most brands have an
+            equivalent buried in their support site.</li>
+          <li>Always read the manufacturer's <strong>datasheet PDF</strong>,
+            not the retail listing — store copy omits or fabricates protocol
+            support.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>Regulatory</h4>
+        <ul>
+          <li><a href="https://ipvm.com/" target="_blank" rel="noopener">ipvm.com</a>
+            — best NDAA / covered-list coverage (mostly paywalled) if OEM
+            origin matters; rebrand chains aren't obvious.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h4>After you buy</h4>
+        <ul>
+          <li><strong>ONVIF Device Manager</strong> (Windows, free) or ONVIF
+            Device Tool — point it at the camera and it enumerates real
+            capabilities and stream URIs within the return window. Pair with
+            VLC for a raw RTSP sanity check.</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="ref-routine">
+      <h4>The five-minute pre-purchase routine</h4>
+      <ol>
+        <li>onvif.org — confirm the exact model and profile</li>
+        <li>ispyconnect — confirm someone has working stream URLs</li>
+        <li>Search "[model] frigate" and "[model] site:ipcamtalk.com"</li>
+        <li>Manufacturer datasheet — RTSP and ONVIF confirmed in writing</li>
+        <li>Buy with easy returns; test with ONVIF Device Manager on day one</li>
+      </ol>
+      <p class="muted small">
+        If steps 1–3 all come up empty, pick something else — not because the
+        camera is necessarily bad, but because you'll be the one discovering
+        its problems.
+      </p>
+    </div>
+  </div>
+</details>
+
 {% endblock %}
 
 {% block scripts %}
