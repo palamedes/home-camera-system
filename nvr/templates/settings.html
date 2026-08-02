@@ -164,7 +164,7 @@
       </div>
       <button class="btn btn-sm" data-reset-pw>Reset password</button>
       {% if u.id != me_id %}
-      <button class="btn btn-sm btn-danger" data-delete-user>Remove</button>
+      <button class="remove-x" data-delete-user title="Remove user" aria-label="Remove">&times;</button>
       {% endif %}
     </div>
     {% endfor %}
@@ -214,6 +214,17 @@
 
 {% block scripts %}
 <script>
+// A deliberate "double clutch" for every destructive action: you must type the
+// exact name to confirm a removal.
+function confirmRemove(kind, name, extra) {
+  const typed = prompt(
+    `Remove the ${kind} "${name}"? This cannot be undone.`
+    + (extra ? `\n${extra}` : '')
+    + `\n\nType the name to confirm:`
+  );
+  return typed != null && typed.trim().toLowerCase() === name.trim().toLowerCase();
+}
+
 // ---- user management (admin only; elements absent for viewers) ----
 (function () {
   const modal = document.getElementById('user-modal');
@@ -290,8 +301,8 @@
   list.querySelectorAll('[data-delete-user]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const row = btn.closest('[data-user]');
-      const name = row.querySelector('.title').textContent.trim();
-      if (!confirm(`Remove user ${name}? This cannot be undone.`)) return;
+      const name = row.querySelector('.title').textContent.replace('(you)', '').trim();
+      if (!confirmRemove('user', name)) return;
       const r = await fetch(`/api/users/${row.dataset.user}`, { method: 'DELETE' });
       if (r.ok) row.remove();
       else { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not remove user.'); }
@@ -412,8 +423,8 @@ document.querySelectorAll('[data-vcam-vis]').forEach(box => {
 document.querySelectorAll('[data-vcam-del]').forEach(btn => {
   btn.addEventListener('click', async () => {
     const row = btn.closest('[data-vcam-row]');
-    const name = row.querySelector('.title').textContent.trim();
-    if (!confirm(`Remove the virtual camera "${name}"?`)) return;
+    const name = (row.querySelector('.title a') || row.querySelector('.title')).textContent.trim();
+    if (!confirmRemove('virtual camera', name)) return;
     const r = await fetch(`/api/virtual/${btn.dataset.vcamDel}`, { method: 'DELETE' });
     if (r.ok) row.remove();
     else alert('Could not remove it.');
@@ -446,8 +457,8 @@ document.querySelectorAll('[data-delete]').forEach(button => {
   button.addEventListener('click', async () => {
     const row = button.closest('[data-camera]');
     const id = row.dataset.camera;
-    const name = row.querySelector('.title').textContent;
-    if (!confirm(`Remove ${name}?\n\nRecorded footage is kept on disk unless you delete it separately.`)) return;
+    const name = row.querySelector('.title').textContent.trim();
+    if (!confirmRemove('camera', name, 'Recorded footage is kept on disk.')) return;
     button.disabled = true;
     const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (response.ok) row.remove();
