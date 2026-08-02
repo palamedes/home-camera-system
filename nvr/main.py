@@ -260,6 +260,12 @@ def cameras_page(request: Request):
     )
 
 
+@app.get("/wall", response_class=HTMLResponse)
+def wall(request: Request):
+    """Chromeless video wall: every camera tiled to fill the viewport."""
+    return render(request, "wall.html", cameras=camera_view_models())
+
+
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)
 def camera_page(request: Request, camera_id: str):
     camera = db.camera(camera_id)

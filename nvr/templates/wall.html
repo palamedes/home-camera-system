@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wall — Sentry</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
+  <style>
+    /* The wall is deliberately its own page, not the app shell: no topbar, no
+       padding, no scroll — the cameras are the entire interface. */
+    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; }
+    .wall {
+      display: grid;
+      width: 100vw; height: 100vh;
+      gap: 2px;
+      background: #000;
+    }
+    .wall-cell {
+      position: relative;
+      overflow: hidden;
+      background: #0a0a0a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 0; min-height: 0;
+    }
+    .wall-cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .wall-off { color: #555; font: 500 14px system-ui, sans-serif; }
+    /* Camera name: hidden until you hover a tile, so nothing sits over the
+       video by default. */
+    .wall-name {
+      position: absolute;
+      left: 0; bottom: 0;
+      padding: 5px 10px;
+      font: 500 12px system-ui, sans-serif;
+      color: #fff;
+      background: linear-gradient(to top, rgb(0 0 0 / .65), transparent);
+      width: 100%;
+      opacity: 0;
+      transition: opacity .15s;
+      pointer-events: none;
+    }
+    .wall-cell:hover .wall-name { opacity: 1; }
+    .wall-hint {
+      position: fixed;
+      top: 14px; left: 50%; transform: translateX(-50%);
+      padding: 7px 14px;
+      background: rgb(0 0 0 / .7);
+      color: #cbd5e1;
+      border-radius: 999px;
+      font: 500 12.5px system-ui, sans-serif;
+      transition: opacity .5s;
+      z-index: 10;
+    }
+    .wall-empty {
+      position: fixed; inset: 0;
+      display: grid; place-items: center;
+      color: #666; font: 500 16px system-ui, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="wall" class="wall">
+    {% for camera in cameras %}
+      {% if camera.online %}
+      <div class="wall-cell">
+        <video data-live-tile
+               data-stream="{{ (camera.id ~ '_sub') if camera.sub_url else camera.id }}"
+               data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
+               muted playsinline></video>
+        <span class="wall-name">{{ camera.name }}</span>
+      </div>
+      {% else %}
+      <div class="wall-cell wall-off">{{ camera.name }} — offline</div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if not cameras %}<div class="wall-empty">No cameras to show</div>{% endif %}
+  <div class="wall-hint" id="hint">Press Esc to exit</div>
+
+  <script src="/static/live.js"></script>
+  <script>
+    const wall = document.getElementById('wall');
+
+    // Choose a column count that leaves the fewest empty cells, breaking ties
+    // toward cells closest to a 16:9 shape. A full-bleed grid never leaves
+    // gaps, so this is purely about making the tiles look their best.
+    function layout() {
+      const n = wall.children.length;
+      if (!n) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      const target = 16 / 9;
+      let best = null;
+      for (let cols = 1; cols <= n; cols++) {
+        const rows = Math.ceil(n / cols);
+        const empty = rows * cols - n;
+        const cellAspect = (W / cols) / (H / rows);
+        const aspectErr = Math.abs(Math.log(cellAspect / target));
+        const score = empty * 1.5 + aspectErr;
+        if (!best || score < best.score) best = { cols, rows, score };
+      }
+      wall.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+      wall.style.gridTemplateRows = `repeat(${best.rows}, 1fr)`;
+    }
+
+    window.addEventListener('resize', layout);
+    layout();
+    initLiveTiles();
+
+    // Esc, or the browser back gesture, returns to the normal view.
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') window.location.href = '/cameras';
+    });
+
+    const hint = document.getElementById('hint');
+    setTimeout(() => { hint.style.opacity = '0'; }, 3000);
+  </script>
+</body>
+</html>

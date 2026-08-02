@@ -7,7 +7,10 @@
     <h1>Cameras</h1>
     <p>{{ cameras|length }} camera{{ '' if cameras|length == 1 else 's' }} configured</p>
   </div>
-  <a href="/discover" class="btn btn-primary">Add camera</a>
+  <div class="row" style="flex: 0 0 auto;">
+    {% if cameras %}<a href="/wall" class="btn">Wall view</a>{% endif %}
+    <a href="/discover" class="btn btn-primary">Add camera</a>
+  </div>
 </div>
 
 {% if cameras %}
