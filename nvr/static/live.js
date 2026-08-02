@@ -95,15 +95,38 @@ async function startLive(options, attempt = 0) {
   try {
     const pc = await tryWebRTC(options);
     if (modeLabel) modeLabel.textContent = 'WebRTC';
+    status.classList.add('hidden');
 
-    // A stream that drops mid-session should recover on its own — cameras on
-    // WiFi do this routinely and nobody is around to hit reload.
+    // Keep a working stream alive through transient blips. WebRTC routinely
+    // flips connected -> disconnected -> connected on its own (ICE consent
+    // refresh, a dropped packet); only "failed" is terminal. Tearing the
+    // stream down on every "disconnected" caused a connect/rebuild loop —
+    // video for a second, then the fallback's "unavailable".
+    let graceTimer = null;
+    let rebuilt = false;
+    const rebuild = () => {
+      if (rebuilt) return;   // one rebuild per connection, no thrashing
+      rebuilt = true;
+      clearTimeout(graceTimer);
+      try { pc.close(); } catch (_) {}
+      status.classList.remove('hidden');
+      status.innerHTML = '<span class="spinner"></span>';
+      setTimeout(() => startLive(options), 2000);
+    };
     pc.addEventListener('connectionstatechange', () => {
-      if (['failed', 'disconnected'].includes(pc.connectionState)) {
-        status.classList.remove('hidden');
-        status.innerHTML = '<span class="spinner"></span>';
-        pc.close();
-        setTimeout(() => startLive(options), 2000);
+      const state = pc.connectionState;
+      if (state === 'connected') {
+        clearTimeout(graceTimer);
+        graceTimer = null;
+        status.classList.add('hidden');
+      } else if (state === 'disconnected') {
+        // Give it a chance to recover before rebuilding.
+        clearTimeout(graceTimer);
+        graceTimer = setTimeout(() => {
+          if (['disconnected', 'failed'].includes(pc.connectionState)) rebuild();
+        }, 8000);
+      } else if (state === 'failed') {
+        rebuild();
       }
     });
   } catch (error) {
@@ -148,11 +171,29 @@ function initLiveTile(video, { stream, poster }) {
     try {
       const pc = await tryWebRTC({ stream, video, audio: false });
       video.classList.add('tile-live');
+      let grace = null;
+      let gone = false;
+      const drop = () => {
+        if (gone) return;
+        gone = true;
+        clearTimeout(grace);
+        video.classList.remove('tile-live');
+        try { pc.close(); } catch (_) {}
+        if (!disposed) timer = setTimeout(connect, 4000);
+      };
       pc.addEventListener('connectionstatechange', () => {
-        if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-          video.classList.remove('tile-live');
-          pc.close();
-          if (!disposed) timer = setTimeout(connect, 4000);
+        const state = pc.connectionState;
+        if (state === 'connected') {
+          clearTimeout(grace);
+          grace = null;
+        } else if (state === 'disconnected') {
+          // Transient; let it recover before rebuilding the tile.
+          clearTimeout(grace);
+          grace = setTimeout(() => {
+            if (['disconnected', 'failed'].includes(pc.connectionState)) drop();
+          }, 8000);
+        } else if (state === 'failed' || state === 'closed') {
+          drop();
         }
       });
     } catch (error) {
