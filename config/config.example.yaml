@@ -5,7 +5,12 @@
 # database, since credentials change and the UI needs to write them.
 
 server:
-  # 0.0.0.0 so the box is reachable at http://home.local:8080 from the LAN.
+  # IPv4 wildcard, reachable at http://<host>.local:8080 from the LAN.
+  #
+  # Not "::" — asyncio sets IPV6_V6ONLY on every IPv6 socket it opens, so
+  # binding the IPv6 wildcard under uvicorn silently drops IPv4 entirely
+  # rather than serving both. avahi publishes an A record alongside the AAAA,
+  # and browsers fall back to it, so IPv4-only is the reachable choice.
   host: 0.0.0.0
   port: 8080
   # Session lifetime for a logged-in browser.
