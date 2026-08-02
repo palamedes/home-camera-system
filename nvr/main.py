@@ -356,12 +356,46 @@ def camera_view_models(request: Request) -> list[dict[str, Any]]:
     return cameras
 
 
+def virtual_view_models(request: Request) -> list[dict[str, Any]]:
+    """Virtual cameras the user may see, with their parent's stream and online
+    state, ready to be dewarped in the browser."""
+    import json as _json
+
+    status = go2rtc.stream_status()
+    result = []
+    for v in db.virtual_cameras():
+        parent = db.camera(v["parent_id"])
+        if not parent or not can_view(request, parent):
+            continue
+        stream = (
+            streams.sub_stream_name(parent["id"])
+            if parent["sub_url"] else streams.main_stream_name(parent["id"])
+        )
+        info = status.get(streams.main_stream_name(parent["id"]))
+        try:
+            calib = _json.loads(v["calib"]) if v["calib"] else {}
+        except (ValueError, TypeError):
+            calib = {}
+        result.append({
+            "id": v["id"],
+            "name": v["name"],
+            "parent_id": v["parent_id"],
+            "parent_name": parent["name"],
+            "stream": stream,
+            "view": {"yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"]},
+            "calib": calib,
+            "online": streams.stream_online(info),
+        })
+    return result
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     cameras = camera_view_models(request)
     return render(
         request, "dashboard.html",
         cameras=cameras,
+        virtuals=virtual_view_models(request),
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
         storage=retention.estimate(),
@@ -601,6 +635,41 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     go2rtc.reload()
     recording.sync()
     return JSONResponse({"ok": True, "purged": purge})
+
+
+# ---------------------------------------------------------------------------
+# API — virtual cameras (fixed dewarp views of a fisheye parent; admin only)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/cameras/{parent_id}/virtual")
+async def api_create_virtual(parent_id: str, request: Request):
+    parent = db.camera(parent_id)
+    if not parent:
+        return JSONResponse({"error": "parent not found"}, status_code=404)
+    payload = await request.json()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "A name is required."}, status_code=400)
+    import json as _json
+
+    vid = db.add_virtual_camera(
+        parent_id=parent_id,
+        name=name,
+        yaw=float(payload.get("yaw") or 0.0),
+        pitch=float(payload.get("pitch") or 0.0),
+        fov=float(payload.get("fov") or 1.5708),
+        calib=_json.dumps(payload.get("calib") or {}),
+    )
+    return JSONResponse({"id": vid, "name": name})
+
+
+@app.delete("/api/virtual/{vid}")
+def api_delete_virtual(vid: int):
+    if not db.virtual_camera(vid):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_virtual_camera(vid)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/cameras/{camera_id}/snapshot.jpg")

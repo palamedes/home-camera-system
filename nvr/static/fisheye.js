@@ -145,8 +145,11 @@
     if (!gl) return null;  // caller keeps the raw <video> visible
 
     const id = opts.cameraId || 'cam';
-    let mode = opts.mode || 'single';           // single | quad | pano
-    let calib = loadCalib(id);
+    let mode = opts.mode || 'single';           // single | dual | quad | pano
+    const interactive = opts.interactive !== false;
+    const persist = opts.persistCalib !== false;
+    let activeView = 0;                          // which view single-mode shows
+    let calib = opts.calib ? { ...DEFAULT_CALIB, ...opts.calib } : loadCalib(id);
 
     const progRect = buildProgram(gl, FRAG_RECT);
     const progPano = buildProgram(gl, FRAG_PANO);
@@ -165,13 +168,15 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-    // Virtual views. Quad mode uses four; single/pano use the first.
+    // Virtual views. Quad uses four; dual the first two; single shows the
+    // active one. Seeded from opts.view when provided (fixed dashboard tiles).
     const views = [
       { yaw: 0, pitch: 0.6, fov: 90 * D2R },
       { yaw: Math.PI / 2, pitch: 0.6, fov: 90 * D2R },
       { yaw: Math.PI, pitch: 0.6, fov: 90 * D2R },
       { yaw: -Math.PI / 2, pitch: 0.6, fov: 90 * D2R },
     ];
+    if (opts.view) views[0] = { ...views[0], ...opts.view };
 
     function viewports() {
       const w = canvas.width, h = canvas.height;
@@ -184,7 +189,14 @@
           { x: hw, y: 0, w: w - hw, h: h - hh, view: 3 },
         ];
       }
-      return [{ x: 0, y: 0, w: w, h: h, view: 0 }];
+      if (mode === 'dual') {
+        const hw = (w / 2) | 0;
+        return [
+          { x: 0, y: 0, w: hw, h: h, view: 0 },
+          { x: hw, y: 0, w: w - hw, h: h, view: 1 },
+        ];
+      }
+      return [{ x: 0, y: 0, w: w, h: h, view: activeView }];
     }
 
     function setLensUniforms(gl, loc) {
@@ -282,44 +294,60 @@
       else if (!running) { running = true; schedule(); }
     });
 
-    // ---- interaction: drag pans/tilts, wheel zooms --------------------
+    // ---- interaction: drag pans/tilts, wheel zooms, dbl-click focuses -
 
-    function viewAt(clientX, clientY) {
+    // Which view index sits under a client point, for the current layout.
+    function indexAt(clientX, clientY) {
       const r = canvas.getBoundingClientRect();
-      if (mode !== 'quad') return views[0];
       const left = (clientX - r.left) < r.width / 2;
       const top = (clientY - r.top) < r.height / 2;
-      return views[(top ? 0 : 2) + (left ? 0 : 1)];
+      if (mode === 'quad') return (top ? 0 : 2) + (left ? 0 : 1);
+      if (mode === 'dual') return left ? 0 : 1;
+      return activeView;
     }
 
-    let drag = null;
-    canvas.addEventListener('pointerdown', e => {
-      drag = { x: e.clientX, y: e.clientY, view: viewAt(e.clientX, e.clientY) };
-      canvas.setPointerCapture(e.pointerId);
-    });
-    canvas.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const v = drag.view;
-      const k = v.fov / canvas.clientHeight;   // radians per pixel — zoom-aware
-      v.yaw += (e.clientX - drag.x) * k;
-      v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
-      drag.x = e.clientX; drag.y = e.clientY;
-    });
-    const endDrag = () => { drag = null; };
-    canvas.addEventListener('pointerup', endDrag);
-    canvas.addEventListener('pointercancel', endDrag);
-    canvas.addEventListener('wheel', e => {
-      e.preventDefault();
-      const v = viewAt(e.clientX, e.clientY);
-      v.fov = clamp(v.fov * (e.deltaY > 0 ? 1.06 : 0.94), 12 * D2R, 150 * D2R);
-    }, { passive: false });
+    if (interactive) {
+      let drag = null;
+      canvas.addEventListener('pointerdown', e => {
+        drag = { x: e.clientX, y: e.clientY, view: views[indexAt(e.clientX, e.clientY)] };
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', e => {
+        if (!drag) return;
+        const v = drag.view;
+        const k = v.fov / canvas.clientHeight;   // radians per pixel — zoom-aware
+        v.yaw += (e.clientX - drag.x) * k;
+        v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+        drag.x = e.clientX; drag.y = e.clientY;
+      });
+      const endDrag = () => { drag = null; };
+      canvas.addEventListener('pointerup', endDrag);
+      canvas.addEventListener('pointercancel', endDrag);
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        views[indexAt(e.clientX, e.clientY)].fov =
+          clamp(views[indexAt(e.clientX, e.clientY)].fov * (e.deltaY > 0 ? 1.06 : 0.94),
+            12 * D2R, 150 * D2R);
+      }, { passive: false });
+      // Double-click a tile in a multi-view mode to focus it full-frame.
+      canvas.addEventListener('dblclick', e => {
+        if (mode === 'quad' || mode === 'dual') {
+          activeView = indexAt(e.clientX, e.clientY);
+          mode = 'single';
+          resize();
+          if (opts.onModeChange) opts.onModeChange('single');
+        }
+      });
+    }
 
     return {
       setMode(m) { mode = m; resize(); },
       getMode() { return mode; },
-      setCalib(patch) { calib = { ...calib, ...patch }; saveCalib(id, calib); },
+      activeIndex() { return activeView; },
+      activeView() { return { ...views[activeView] }; },
+      setCalib(patch) { calib = { ...calib, ...patch }; if (persist) saveCalib(id, calib); },
       getCalib() { return { ...calib }; },
-      resetCalib() { calib = { ...DEFAULT_CALIB }; saveCalib(id, calib); },
+      resetCalib() { calib = { ...DEFAULT_CALIB }; if (persist) saveCalib(id, calib); },
       destroy() {
         running = false;
         if (rafId) cancelAnimationFrame(rafId);
@@ -330,4 +358,28 @@
   }
 
   window.initFisheye = initFisheye;
+
+  /*
+   * Dashboard virtual-camera tiles: pull the parent fisheye's stream into a
+   * hidden <video> (WebRTC, via live.js) and render one fixed dewarp view into
+   * the tile's <canvas>. No interaction — a virtual camera is a saved angle.
+   */
+  function initVirtualTiles(root) {
+    (root || document).querySelectorAll('[data-vcam]').forEach(el => {
+      const video = el.querySelector('video');
+      const canvas = el.querySelector('canvas');
+      if (!video || !canvas) return;
+      let view = {}, calib = {};
+      try { view = JSON.parse(el.dataset.view || '{}'); } catch (_) {}
+      try { calib = JSON.parse(el.dataset.calib || '{}'); } catch (_) {}
+      if (typeof initLiveTile === 'function') {
+        initLiveTile(video, { stream: el.dataset.stream });
+      }
+      initFisheye(video, canvas, {
+        mode: 'single', interactive: false, persistCalib: false, view, calib,
+      });
+    });
+  }
+
+  window.initVirtualTiles = initVirtualTiles;
 })();

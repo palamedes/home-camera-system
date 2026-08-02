@@ -74,6 +74,22 @@ CREATE TABLE IF NOT EXISTS segments (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_segments_lookup ON segments(camera_id, start_ts);
+
+-- A virtual camera is a fixed dewarp view aimed out of a fisheye parent:
+-- an orientation (yaw/pitch/fov) plus a snapshot of the parent's calibration,
+-- so it renders identically in any browser. Live-only; dewarping happens
+-- client-side from the parent's stream.
+CREATE TABLE IF NOT EXISTS virtual_cameras (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id  TEXT    NOT NULL,
+    name       TEXT    NOT NULL,
+    yaw        REAL    NOT NULL DEFAULT 0,
+    pitch      REAL    NOT NULL DEFAULT 0,
+    fov        REAL    NOT NULL DEFAULT 1.5708,
+    calib      TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vcam_parent ON virtual_cameras(parent_id);
 """
 
 
@@ -229,6 +245,30 @@ class Database:
     def delete_camera(self, camera_id: str) -> None:
         self.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
         self.execute("DELETE FROM segments WHERE camera_id = ?", (camera_id,))
+        self.execute("DELETE FROM virtual_cameras WHERE parent_id = ?", (camera_id,))
+
+    # ---- virtual cameras -------------------------------------------------
+
+    def virtual_cameras(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM virtual_cameras ORDER BY name")
+
+    def virtual_camera(self, vid: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM virtual_cameras WHERE id = ?", (vid,))
+
+    def add_virtual_camera(
+        self, parent_id: str, name: str, yaw: float, pitch: float,
+        fov: float, calib: str,
+    ) -> int:
+        cur = self.execute(
+            "INSERT INTO virtual_cameras "
+            "(parent_id, name, yaw, pitch, fov, calib, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (parent_id, name, yaw, pitch, fov, calib, int(time.time())),
+        )
+        return int(cur.lastrowid or 0)
+
+    def delete_virtual_camera(self, vid: int) -> None:
+        self.execute("DELETE FROM virtual_cameras WHERE id = ?", (vid,))
 
     # ---- segments --------------------------------------------------------
 

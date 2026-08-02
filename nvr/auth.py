@@ -152,6 +152,7 @@ class AuthMiddleware:
             admin_only = (
                 path.startswith("/api/users")
                 or path.startswith("/api/discover")
+                or path.startswith("/api/virtual")
                 or (path.startswith("/api/cameras") and method in ("POST", "PATCH", "DELETE"))
             )
             if admin_only:

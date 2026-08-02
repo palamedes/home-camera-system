@@ -83,6 +83,39 @@
     </div>
   </section>
 
+  {% if virtuals %}
+  <section class="card card-wide">
+    <div class="card-head">
+      <h2>Virtual cameras</h2>
+      <span class="muted small">dewarped from a 360</span>
+    </div>
+    <div class="card-body">
+      <div class="mini-grid">
+        {% for v in virtuals %}
+        <div class="mini vcam" data-vcam data-stream="{{ v.stream }}"
+             data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+          <a class="mini-media vcam-media" href="/cameras/{{ v.parent_id }}?view=single"
+             title="From {{ v.parent_name }}">
+            {% if v.online %}
+              <video muted playsinline></video><canvas></canvas>
+            {% else %}
+              <div class="placeholder">Offline</div>
+            {% endif %}
+          </a>
+          <div class="mini-label">
+            <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
+            <span class="truncate">{{ v.name }}</span>
+            {% if is_admin %}
+            <button class="vcam-del" data-vcam-del="{{ v.id }}" title="Remove virtual camera" aria-label="Remove">&times;</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="card">
     <div class="card-head">
       <h2>System</h2>
@@ -165,6 +198,7 @@
 
 {% block scripts %}
 <script src="/static/live.js"></script>
+{% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 function tick() {
   document.getElementById('clock').textContent =
@@ -185,6 +219,18 @@ document.querySelectorAll('dd[data-ts]').forEach(el => {
 
 // Live substream video in each preview tile, snapshot poster as fallback.
 initLiveTiles();
+
+// Virtual cameras: dewarp the parent stream to each saved angle in the browser.
+if (typeof initVirtualTiles === 'function') initVirtualTiles();
+
+document.querySelectorAll('[data-vcam-del]').forEach(btn => {
+  btn.addEventListener('click', async e => {
+    e.preventDefault();
+    if (!confirm('Remove this virtual camera?')) return;
+    const r = await fetch(`/api/virtual/${btn.dataset.vcamDel}`, { method: 'DELETE' });
+    if (r.ok) btn.closest('.vcam').remove();
+  });
+});
 
 const fmtUntil = ts => new Date(ts * 1000).toLocaleString([], {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',

@@ -31,16 +31,15 @@
   <div class="segmented" id="view-modes" role="group" aria-label="View">
     <button data-view="raw" class="active">Raw</button>
     <button data-view="single">Dewarp</button>
+    <button data-view="dual">Dual</button>
     <button data-view="quad">Quad</button>
     <button data-view="pano">Pano</button>
   </div>
   <button class="btn" id="calib-btn" hidden>Calibrate</button>
+  <button class="btn btn-primary" id="save-vcam-btn" hidden>Save as camera</button>
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
-  {% if camera.sub_url %}
-  <button class="btn" id="quality-btn"></button>
-  {% endif %}
   <span class="spacer"></span>
   <span class="muted small" id="mode-label"></span>
 </div>
@@ -143,21 +142,6 @@ audioBtn.addEventListener('click', () => {
   setLiveAudio(liveOptions, on);
 });
 
-// Quality toggle: flip ?hd and reload, which tears the old session down cleanly.
-const qualityBtn = document.getElementById('quality-btn');
-if (qualityBtn) {
-  qualityBtn.textContent = useMain ? 'Full res: on' : 'Full res: off';
-  qualityBtn.title = useMain
-    ? 'Showing the main stream. Click for the lighter substream.'
-    : 'Showing the substream. Click for full resolution (heavier).';
-  qualityBtn.addEventListener('click', () => {
-    const url = new URL(location.href);
-    if (useMain) url.searchParams.delete('hd');
-    else url.searchParams.set('hd', '1');
-    location.href = url.toString();
-  });
-}
-
 document.getElementById('fullscreen-btn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else player.requestFullscreen();
@@ -169,12 +153,32 @@ const canvas = document.getElementById('dewarp');
 const modeButtons = document.getElementById('view-modes');
 const calibBtn = document.getElementById('calib-btn');
 const calibPanel = document.getElementById('calib-panel');
+const saveBtn = document.getElementById('save-vcam-btn');
 const D2R = Math.PI / 180;
 
 const fisheye = initFisheye(liveOptions.video, canvas, {
   cameraId: {{ camera.id | tojson }},
   mode: 'single',
+  // Double-clicking a Quad/Dual tile focuses it to single — reflect that in
+  // the toolbar.
+  onModeChange: m => updateModeUI(m),
 });
+
+function updateModeUI(m) {
+  [...modeButtons.children].forEach(b =>
+    b.classList.toggle('active', b.dataset.view === m));
+  const dewarping = m !== 'raw';
+  canvas.hidden = !dewarping;
+  calibBtn.hidden = !dewarping;
+  if (!dewarping) calibPanel.hidden = true;
+  // Saving captures one aimed view, so it's offered once you've focused a
+  // single view (Dewarp, or a double-clicked Quad/Dual tile).
+  saveBtn.hidden = m !== 'single';
+  const url = new URL(location.href);
+  if (m === 'raw') url.searchParams.delete('view');
+  else url.searchParams.set('view', m);
+  history.replaceState(null, '', url);
+}
 
 if (!fisheye) {
   // WebGL unavailable — leave the raw video and hide the dewarp controls.
@@ -185,26 +189,41 @@ if (!fisheye) {
 
   function applyMode(m) {
     current = m;
-    [...modeButtons.children].forEach(b =>
-      b.classList.toggle('active', b.dataset.view === m));
-    if (m === 'raw') {
-      canvas.hidden = true;
-      calibBtn.hidden = true;
-      calibPanel.hidden = true;
-    } else {
-      canvas.hidden = false;
-      calibBtn.hidden = false;
-      fisheye.setMode(m);
-    }
-    const url = new URL(location.href);
-    if (m === 'raw') url.searchParams.delete('view');
-    else url.searchParams.set('view', m);
-    history.replaceState(null, '', url);
+    if (m !== 'raw') fisheye.setMode(m);
+    updateModeUI(m);
   }
 
   modeButtons.addEventListener('click', e => {
     const b = e.target.closest('[data-view]');
     if (b) applyMode(b.dataset.view);
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    const name = prompt('Name this virtual camera (e.g. "Front door"):');
+    if (!name || !name.trim()) return;
+    const v = fisheye.activeView();
+    saveBtn.disabled = true;
+    try {
+      const r = await fetch(`/api/cameras/{{ camera.id }}/virtual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          yaw: v.yaw, pitch: v.pitch, fov: v.fov,
+          calib: fisheye.getCalib(),
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        if (confirm(`Saved "${name.trim()}". View it on the dashboard now?`)) {
+          location.href = '/';
+        }
+      } else {
+        alert(data.error || 'Could not save the virtual camera.');
+      }
+    } finally {
+      saveBtn.disabled = false;
+    }
   });
 
   calibBtn.addEventListener('click', () => { calibPanel.hidden = !calibPanel.hidden; });

@@ -577,6 +577,18 @@ input:focus, select:focus {
   border: 1px solid var(--line);
 }
 .mini-media img, .mini-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Virtual-camera tile: the parent video decodes underneath; the canvas shows
+   the dewarped view on top. Never display:none the video or the decoder stalls. */
+.vcam-media { position: relative; }
+.vcam-media video { position: absolute; inset: 0; opacity: 0; }
+.vcam-media canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.vcam .mini-label { position: relative; }
+.vcam-del {
+  margin-left: auto; background: transparent; border: none; color: var(--muted);
+  font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px; border-radius: 4px;
+}
+.vcam-del:hover { color: #fca5a5; background: rgb(239 68 68 / .12); }
 .mini-media .placeholder { color: #4b5563; font-size: 12px; }
 .mini-label { display: flex; align-items: center; gap: 7px; margin-top: 7px; font-size: 13px; font-weight: 500; }
 .mini:hover .mini-media { border-color: #3a4553; }
