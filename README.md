@@ -91,6 +91,40 @@ system unit instead of a user one — add `User=<you>`, `Group=<you>`, and
 Either way, setting `server.port: 8080` in `config/config.yaml` avoids the
 question entirely.
 
+## Forgot your password
+
+Recovery needs shell access to the box — there is no email reset, because
+there is no email, and a LAN appliance that can be recovered remotely can be
+taken over remotely.
+
+```bash
+cd ~/Cameras
+.venv/bin/python -m nvr.admin reset-password
+```
+
+It prompts for the new password (never taken as an argument, so it stays out
+of shell history and out of `/proc` where other users could read it) and signs
+out every existing session, on the assumption that a password being reset is a
+password no longer trusted.
+
+Other commands:
+
+```bash
+.venv/bin/python -m nvr.admin list-users     # accounts and active sessions
+.venv/bin/python -m nvr.admin add-user       # a second account
+.venv/bin/python -m nvr.admin delete-user bob
+```
+
+Deleting the last remaining account is refused — that would lock you out of
+the UI entirely.
+
+**Locked out of a camera instead?** That is the camera's own password, not
+Sentry's, and Sentry cannot recover it. Modern Reolink firmware ships with no
+default password and offers no reset path, so the only way back in is the
+physical reset button (hold ~10s), which returns the camera to factory
+settings and clears its configuration. Once it is set up again, update the
+stored credentials in Sentry under Settings.
+
 ## Configuration
 
 System settings live in `config/config.yaml` (copied from
