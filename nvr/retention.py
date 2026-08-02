@@ -76,11 +76,24 @@ class RetentionService:
         deleted = 0
         freed = 0
 
-        # 1. Age limit.
-        if self.config.storage.max_age_days > 0:
-            cutoff = time.time() - self.config.storage.max_age_days * 86400
+        # 1. Age limit — per camera, since each may set its own retention
+        #    (e.g. 8 hours on one, 7 days on another). A camera with no override
+        #    uses the global default. Applied per camera rather than globally so
+        #    a camera whose retention is *longer* than the default is not pruned
+        #    by it.
+        now = time.time()
+        global_seconds = self.config.storage.max_age_days * 86400
+
+        cameras = {c["id"]: c for c in self.db.cameras()}
+        for camera in cameras.values():
+            seconds = camera["retention_seconds"] or global_seconds
+            if seconds <= 0:
+                continue
+            cutoff = now - seconds
             while True:
-                rows = self.db.segments_older_than(cutoff, limit=BATCH)
+                rows = self.db.segments_older_than_for_camera(
+                    camera["id"], cutoff, limit=BATCH
+                )
                 if not rows:
                     break
                 for row in rows:
@@ -88,6 +101,26 @@ class RetentionService:
                     deleted += 1
                 if len(rows) < BATCH:
                     break
+
+        # Segments left behind by a removed camera fall back to the global age
+        # limit so they cannot linger forever.
+        if global_seconds > 0:
+            present = {r["camera_id"] for r in self.db.query(
+                "SELECT DISTINCT camera_id FROM segments"
+            )}
+            for orphan_id in present - set(cameras):
+                cutoff = now - global_seconds
+                while True:
+                    rows = self.db.segments_older_than_for_camera(
+                        orphan_id, cutoff, limit=BATCH
+                    )
+                    if not rows:
+                        break
+                    for row in rows:
+                        freed += self._delete(row)
+                        deleted += 1
+                    if len(rows) < BATCH:
+                        break
 
         # 2. Size quota.
         try:

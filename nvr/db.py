@@ -255,6 +255,15 @@ class Database:
             (cutoff, limit),
         )
 
+    def segments_older_than_for_camera(
+        self, camera_id: str, cutoff: float, limit: int = 500
+    ) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM segments WHERE camera_id = ? AND start_ts < ? "
+            "ORDER BY start_ts LIMIT ?",
+            (camera_id, cutoff, limit),
+        )
+
     def delete_segment(self, segment_id: int) -> None:
         self.execute("DELETE FROM segments WHERE id = ?", (segment_id,))
 

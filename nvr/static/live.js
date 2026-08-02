@@ -30,12 +30,13 @@ async function waitForIce(pc, timeoutMs = 2500) {
   });
 }
 
-async function tryWebRTC({ stream, video, status }) {
+async function tryWebRTC({ stream, video, audio = true }) {
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
 
   const media = new MediaStream();
   pc.addTransceiver('video', { direction: 'recvonly' });
-  pc.addTransceiver('audio', { direction: 'recvonly' });
+  // Grid tiles are silent, so they skip the audio transceiver entirely.
+  if (audio) pc.addTransceiver('audio', { direction: 'recvonly' });
   pc.addEventListener('track', event => {
     media.addTrack(event.track);
     video.srcObject = media;
@@ -120,4 +121,66 @@ async function startLive(options, attempt = 0) {
     console.warn('WebRTC unavailable, falling back to MJPEG:', error.message);
     useMjpeg(options);
   }
+}
+
+/*
+ * Live grid tile.
+ *
+ * A muted, low-res WebRTC view for dashboard/overview tiles. Uses the
+ * substream so a wall of cameras stays cheap — the sub is a fraction of the
+ * main stream's pixels and rides through as H.264 with no server transcode.
+ *
+ * The still snapshot stays as the poster and as the visible state whenever the
+ * connection is down, so a tile degrades to the old behaviour rather than
+ * going black. It self-heals: a dropped tile keeps retrying quietly.
+ */
+function initLiveTile(video, { stream, poster }) {
+  video.muted = true;
+  video.playsInline = true;
+  video.autoplay = true;
+  if (poster) video.poster = poster;
+
+  let disposed = false;
+  let timer = null;
+
+  async function connect() {
+    if (disposed) return;
+    try {
+      const pc = await tryWebRTC({ stream, video, audio: false });
+      video.classList.add('tile-live');
+      pc.addEventListener('connectionstatechange', () => {
+        if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+          video.classList.remove('tile-live');
+          pc.close();
+          if (!disposed) timer = setTimeout(connect, 4000);
+        }
+      });
+    } catch (error) {
+      // Stay on the poster and try again later; go2rtc may be warming the sub.
+      if (!disposed) timer = setTimeout(connect, 6000);
+    }
+  }
+
+  connect();
+
+  // Pause tiles while the tab is hidden so we are not decoding video nobody is
+  // looking at; resume on return.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      disposed = true;
+      clearTimeout(timer);
+    } else if (disposed) {
+      disposed = false;
+      connect();
+    }
+  });
+}
+
+function initLiveTiles(root = document) {
+  root.querySelectorAll('video[data-live-tile]').forEach(video => {
+    initLiveTile(video, {
+      stream: video.dataset.stream,
+      poster: video.dataset.poster || undefined,
+    });
+  });
 }

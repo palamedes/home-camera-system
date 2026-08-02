@@ -54,8 +54,10 @@
         <a class="mini" href="/cameras/{{ camera.id }}">
           <div class="mini-media">
             {% if camera.online %}
-              <img data-snapshot="{{ camera.id }}" alt="{{ camera.name }}"
-                   src="/api/cameras/{{ camera.id }}/snapshot.jpg">
+              <video data-live-tile
+                     data-stream="{{ (camera.id ~ '_sub') if camera.sub_url else camera.id }}"
+                     data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
+                     muted playsinline></video>
             {% else %}
               <div class="placeholder">Offline</div>
             {% endif %}
@@ -160,6 +162,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/live.js"></script>
 <script>
 function tick() {
   document.getElementById('clock').textContent =
@@ -178,11 +181,8 @@ document.querySelectorAll('dd[data-ts]').forEach(el => {
   });
 });
 
-setInterval(() => {
-  document.querySelectorAll('img[data-snapshot]').forEach(img => {
-    img.src = `/api/cameras/${img.dataset.snapshot}/snapshot.jpg?t=${Date.now()}`;
-  });
-}, 15000);
+// Live substream video in each preview tile, snapshot poster as fallback.
+initLiveTiles();
 
 const fmtUntil = ts => new Date(ts * 1000).toLocaleString([], {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',

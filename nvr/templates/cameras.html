@@ -49,8 +49,10 @@
   <a class="tile" href="/cameras/{{ camera.id }}">
     <div class="tile-media">
       {% if camera.online %}
-        <img data-snapshot="{{ camera.id }}" alt="{{ camera.name }}"
-             src="/api/cameras/{{ camera.id }}/snapshot.jpg">
+        <video data-live-tile
+               data-stream="{{ (camera.id ~ '_sub') if camera.sub_url else camera.id }}"
+               data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
+               muted playsinline></video>
         {% if camera.record %}<span class="badge badge-rec">REC</span>{% endif %}
       {% else %}
         <div class="placeholder">
@@ -88,13 +90,11 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/live.js"></script>
 <script>
-// Refresh tiles from still frames rather than holding live streams open. A
-// grid of decoded 6 MP streams would cost far more than the overview needs.
-setInterval(() => {
-  document.querySelectorAll('img[data-snapshot]').forEach(img => {
-    img.src = `/api/cameras/${img.dataset.snapshot}/snapshot.jpg?t=${Date.now()}`;
-  });
-}, 10000);
+// Live substream video per tile. The sub is low-res and passes through as
+// H.264 with no server transcode, so a wall of them stays cheap; each tile
+// keeps its snapshot as the poster and falls back to it if the stream drops.
+initLiveTiles();
 </script>
 {% endblock %}
