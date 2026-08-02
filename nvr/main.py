@@ -663,7 +663,7 @@ def api_clip(request: Request, camera_id: str, start: float, duration: float = 6
     camera = db.camera(camera_id)
     if not camera or not can_view(request, camera):
         return Response("not found", status_code=404)
-    duration = max(1.0, min(duration, 1800.0))
+    duration = max(1.0, min(duration, 7200.0))  # cap exports at 2 hours
     try:
         path = playback.export_clip(db, cfg, camera_id, start, duration)
     except FileNotFoundError:

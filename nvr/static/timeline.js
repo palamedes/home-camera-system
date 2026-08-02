@@ -22,11 +22,16 @@ function initHistory({ cameraId, bounds }) {
   const spanSelect = document.getElementById('span');
   const downloadBtn = document.getElementById('download-btn');
 
+  const MIN_SPAN = 300;        // 5 minutes, the tightest zoom
+  const MAX_SPAN = 7 * 86400;  // 7 days
+  const MAX_EXPORT = 2 * 3600; // clip.mp4 caps here
+
   let windowEnd = bounds.end;
   let windowSpan = parseInt(spanSelect.value, 10);
   let ranges = [];
   let chunkStart = null;      // epoch seconds of the loaded chunk
   let hoverX = null;
+  let selection = null;       // { start, end } epoch seconds, for export
 
   const windowStart = () => windowEnd - windowSpan;
 
@@ -117,6 +122,17 @@ function initHistory({ cameraId, bounds }) {
       }
     }
 
+    // Selected region (for export).
+    if (selection) {
+      const sx0 = timeToX(Math.min(selection.start, selection.end));
+      const sx1 = timeToX(Math.max(selection.start, selection.end));
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
+      ctx.fillRect(sx0, 0, sx1 - sx0, h - 16);
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx0 + 0.5, 0.5, sx1 - sx0 - 1, h - 17);
+    }
+
     // Hover guide.
     if (hoverX !== null) {
       ctx.strokeStyle = 'rgba(230,237,243,0.35)';
@@ -200,19 +216,96 @@ function initHistory({ cameraId, bounds }) {
 
   // ---- interaction ------------------------------------------------------
 
-  canvas.addEventListener('click', event => {
-    const rect = canvas.getBoundingClientRect();
-    playFrom(Math.floor(xToTime(event.clientX - rect.left)));
+  // A press that moves more than a few pixels is a region drag; otherwise it's
+  // a click to seek. This keeps one pointer doing both jobs on the timeline.
+  const DRAG_THRESHOLD = 4;
+  let press = null;  // { x, time, dragging }
+
+  const localX = event => event.clientX - canvas.getBoundingClientRect().left;
+
+  canvas.addEventListener('mousedown', event => {
+    press = { x: localX(event), time: xToTime(localX(event)), dragging: false };
   });
 
   canvas.addEventListener('mousemove', event => {
-    const rect = canvas.getBoundingClientRect();
-    hoverX = event.clientX - rect.left;
-    canvas.title = fmtTime(xToTime(hoverX));
+    const x = localX(event);
+    hoverX = x;
+    canvas.title = fmtTime(xToTime(x));
+    if (press) {
+      if (Math.abs(x - press.x) > DRAG_THRESHOLD) press.dragging = true;
+      if (press.dragging) selection = { start: press.time, end: xToTime(x) };
+    }
+    draw();
+  });
+
+  window.addEventListener('mouseup', event => {
+    if (!press) return;
+    if (press.dragging && selection) {
+      // Normalise and clamp the selected span, then reveal the export bar.
+      let [a, b] = [selection.start, selection.end].sort((x, y) => x - y);
+      if (b - a > MAX_EXPORT) b = a + MAX_EXPORT;
+      selection = { start: a, end: b };
+      showSelection();
+    } else {
+      // A plain click seeks.
+      playFrom(Math.floor(press.time));
+    }
+    press = null;
     draw();
   });
 
   canvas.addEventListener('mouseleave', () => { hoverX = null; draw(); });
+
+  // Scroll to zoom, centered on the cursor so the moment under the pointer
+  // stays put.
+  canvas.addEventListener('wheel', event => {
+    event.preventDefault();
+    const x = localX(event);
+    const pivot = xToTime(x);
+    const factor = event.deltaY > 0 ? 1.25 : 0.8;
+    const newSpan = Math.max(MIN_SPAN, Math.min(MAX_SPAN, windowSpan * factor));
+    // Keep `pivot` at the same x: windowEnd = pivot + (fraction to the right)*span
+    const fracRight = 1 - x / canvas.clientWidth;
+    windowSpan = newSpan;
+    windowEnd = pivot + fracRight * newSpan;
+    spanSelect.value = nearestPreset(newSpan);
+    loadCoverage();
+    draw();
+  }, { passive: false });
+
+  function nearestPreset(span) {
+    const opts = [...spanSelect.options].map(o => parseInt(o.value, 10));
+    return String(opts.reduce((a, b) => (Math.abs(b - span) < Math.abs(a - span) ? b : a)));
+  }
+
+  // ---- region export ----------------------------------------------------
+
+  const selectionBar = document.getElementById('selection-bar');
+  const selectionLabel = document.getElementById('selection-label');
+
+  function showSelection() {
+    if (!selection) return;
+    const secs = Math.round(selection.end - selection.start);
+    const mins = (secs / 60).toFixed(secs < 600 ? 1 : 0);
+    selectionLabel.textContent =
+      `${fmtFull(selection.start)} → ${fmtFull(selection.end)} (${mins} min)`;
+    selectionBar.hidden = false;
+  }
+
+  function clearSelection() {
+    selection = null;
+    selectionBar.hidden = true;
+    draw();
+  }
+
+  document.getElementById('selection-clear').addEventListener('click', clearSelection);
+  document.getElementById('selection-export').addEventListener('click', () => {
+    if (!selection) return;
+    const start = Math.floor(selection.start);
+    const duration = Math.max(1, Math.round(selection.end - selection.start));
+    window.location = `/api/cameras/${encodeURIComponent(cameraId)}/clip.mp4`
+      + `?start=${start}&duration=${duration}`;
+  });
 
   document.querySelectorAll('[data-jump]').forEach(button => {
     button.addEventListener('click', () => {
