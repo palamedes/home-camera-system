@@ -224,7 +224,12 @@ function initHistory({ cameraId, bounds }) {
   let press = null;  // { x, time, dragging, scrub }
 
   const localX = event => event.clientX - canvas.getBoundingClientRect().left;
-  const isScrubKey = event => event.ctrlKey || event.metaKey;
+  // Ctrl or Cmd triggers scrub. On macOS Ctrl+click is delivered as a
+  // right-click (button 2), so treat the secondary button as scrub too, and
+  // suppress the context menu that would otherwise eat the drag.
+  const isScrubKey = event =>
+    event.ctrlKey || event.metaKey || event.button === 2 || event.buttons === 2;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
 
   // Scrubbing that stays inside the loaded 5-min chunk seeks instantly; moving
   // outside it loads the chunk under the cursor, throttled so a fast drag
@@ -246,19 +251,22 @@ function initHistory({ cameraId, bounds }) {
     draw();
   }
 
-  canvas.addEventListener('mousedown', event => {
+  canvas.addEventListener('pointerdown', event => {
     press = {
       x: localX(event), time: xToTime(localX(event)),
       dragging: false, scrub: isScrubKey(event),
     };
+    // Capture so the drag keeps tracking even if the pointer leaves the canvas.
+    try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
     if (press.scrub) { event.preventDefault(); scrubTo(press.time); }
   });
 
-  canvas.addEventListener('mousemove', event => {
+  canvas.addEventListener('pointermove', event => {
     const x = localX(event);
     hoverX = x;
     canvas.title = fmtTime(xToTime(x));
-    canvas.style.cursor = isScrubKey(event) ? 'ew-resize' : 'pointer';
+    canvas.style.cursor =
+      (press && press.scrub) || event.ctrlKey || event.metaKey ? 'ew-resize' : 'pointer';
     if (press) {
       if (Math.abs(x - press.x) > DRAG_THRESHOLD) press.dragging = true;
       if (press.scrub) scrubTo(xToTime(x));
@@ -267,11 +275,10 @@ function initHistory({ cameraId, bounds }) {
     draw();
   });
 
-  window.addEventListener('mouseup', event => {
+  canvas.addEventListener('pointerup', event => {
     if (!press) return;
     if (press.scrub) {
-      // Settle on the release point.
-      playFrom(Math.floor(xToTime(localX(event))));
+      playFrom(Math.floor(xToTime(localX(event))));   // settle on release point
     } else if (press.dragging && selection) {
       // Normalise and clamp the selected span, then reveal the export bar.
       let [a, b] = [selection.start, selection.end].sort((x, y) => x - y);
@@ -279,14 +286,14 @@ function initHistory({ cameraId, bounds }) {
       selection = { start: a, end: b };
       showSelection();
     } else {
-      // A plain click seeks.
-      playFrom(Math.floor(press.time));
+      playFrom(Math.floor(press.time));               // a plain click seeks
     }
     press = null;
     draw();
   });
 
-  canvas.addEventListener('mouseleave', () => { hoverX = null; draw(); });
+  canvas.addEventListener('pointercancel', () => { press = null; draw(); });
+  canvas.addEventListener('pointerleave', () => { if (!press) { hoverX = null; draw(); } });
 
   // Scroll to zoom, centered on the cursor so the moment under the pointer
   // stays put.
