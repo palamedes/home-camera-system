@@ -164,6 +164,22 @@ const replay = initReplay({
   container: document.getElementById('replay'),
 });
 
+// Presence heartbeat: tell the server this session is watching (and whether
+// listening), so the cameras page can show a live viewer count. Only the
+// single live view pings — grid tiles don't — so the count reflects people
+// actually on a camera. presenceVcamId is set when viewing a virtual camera.
+const CAMERA_ID = {{ camera.id | tojson }};
+let presenceVcamId = null;
+function pingPresence() {
+  const target = presenceVcamId != null ? 'vcam:' + presenceVcamId : CAMERA_ID;
+  fetch('/api/presence/ping', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target, listening: !!liveOptions.audio }),
+  }).catch(() => {});
+}
+pingPresence();
+setInterval(pingPresence, 8000);
+
 const audioBtn = document.getElementById('audio-btn');
 audioBtn.addEventListener('click', () => {
   const on = !liveOptions.audio;
@@ -330,6 +346,7 @@ if (!fisheye) {
         if (data && data.calib) fisheye.setCalib(data.calib);
         if (data) fisheye.setView({ yaw: data.yaw, pitch: data.pitch, fov: data.fov });
         editing = { id: data.id, name: data.name };
+        presenceVcamId = data.id;   // count this session toward the virtual camera
         // Show the virtual camera's own name at the top, not the parent 360's.
         const title = document.getElementById('camera-title');
         if (title) title.textContent = data.name;

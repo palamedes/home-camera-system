@@ -71,6 +71,7 @@
       <div class="tile-name">
         <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
         <span class="truncate">{{ camera.name }}</span>
+        <span class="viewers" data-presence="{{ camera.id }}" hidden></span>
       </div>
       <div class="tile-meta">
         <span>{{ camera.model or camera.brand or 'Camera' }}</span>
@@ -97,6 +98,7 @@
       <div class="tile-name">
         <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
         <span class="truncate">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></span>
+        <span class="viewers" data-presence="vcam:{{ v.id }}" hidden></span>
       </div>
     </div>
   </a>
@@ -122,5 +124,26 @@
 // keeps its snapshot as the poster and falls back to it if the stream drops.
 initLiveTiles();
 if (typeof initVirtualTiles === 'function') initVirtualTiles();
+
+// Live viewer counts: how many people are on each camera's single live view
+// (and how many with audio). Grid tiles here don't count themselves.
+async function pollPresence() {
+  try {
+    const counts = await (await fetch('/api/presence')).json();
+    document.querySelectorAll('[data-presence]').forEach(el => {
+      const c = counts[el.dataset.presence];
+      if (c && c.watching > 0) {
+        el.textContent = `👁 ${c.watching}` + (c.listening ? ` 🔊 ${c.listening}` : '');
+        el.title = `${c.watching} watching`
+          + (c.listening ? `, ${c.listening} with audio` : '');
+        el.hidden = false;
+      } else {
+        el.hidden = true;
+      }
+    });
+  } catch (_) {}
+}
+pollPresence();
+setInterval(pollPresence, 8000);
 </script>
 {% endblock %}

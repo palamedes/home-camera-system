@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -852,6 +853,52 @@ def api_status():
         },
         "go2rtc_running": go2rtc.process is not None and go2rtc.process.poll() is None,
     })
+
+
+# ---------------------------------------------------------------------------
+# API — presence (who's watching a camera in single live view)
+# ---------------------------------------------------------------------------
+
+# target -> { session_token: (last_seen, listening) }. A target is a camera id,
+# or "vcam:<id>" for a virtual camera. Grid tiles do not ping, so this counts
+# only people actually on a camera's single live view. In-memory and
+# best-effort: entries simply expire.
+_presence: dict[str, dict[str, tuple[float, bool]]] = {}
+_presence_lock = threading.Lock()
+PRESENCE_TTL = 20.0
+
+
+@app.post("/api/presence/ping")
+async def api_presence_ping(request: Request):
+    payload = await request.json()
+    target = (payload.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "target required"}, status_code=400)
+    token = request.cookies.get(auth.COOKIE_NAME) or "anon"
+    with _presence_lock:
+        _presence.setdefault(target, {})[token] = (time.time(), bool(payload.get("listening")))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/presence")
+def api_presence():
+    now = time.time()
+    out: dict[str, dict[str, int]] = {}
+    with _presence_lock:
+        for target in list(_presence):
+            live = {
+                tok: v for tok, v in _presence[target].items()
+                if now - v[0] < PRESENCE_TTL
+            }
+            if live:
+                _presence[target] = live
+                out[target] = {
+                    "watching": len(live),
+                    "listening": sum(1 for v in live.values() if v[1]),
+                }
+            else:
+                _presence.pop(target, None)
+    return JSONResponse(out)
 
 
 # ---------------------------------------------------------------------------
