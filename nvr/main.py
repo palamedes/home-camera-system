@@ -874,20 +874,7 @@ _presence_lock = threading.Lock()
 PRESENCE_TTL = 20.0
 
 
-@app.post("/api/presence/ping")
-async def api_presence_ping(request: Request):
-    payload = await request.json()
-    target = (payload.get("target") or "").strip()
-    if not target:
-        return JSONResponse({"error": "target required"}, status_code=400)
-    token = request.cookies.get(auth.COOKIE_NAME) or "anon"
-    with _presence_lock:
-        _presence.setdefault(target, {})[token] = (time.time(), bool(payload.get("listening")))
-    return JSONResponse({"ok": True})
-
-
-@app.get("/api/presence")
-def api_presence():
+def _presence_counts() -> dict[str, dict[str, int]]:
     now = time.time()
     out: dict[str, dict[str, int]] = {}
     with _presence_lock:
@@ -904,7 +891,60 @@ def api_presence():
                 }
             else:
                 _presence.pop(target, None)
-    return JSONResponse(out)
+    return out
+
+
+@app.post("/api/presence/ping")
+async def api_presence_ping(request: Request):
+    payload = await request.json()
+    target = (payload.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "target required"}, status_code=400)
+    token = request.cookies.get(auth.COOKIE_NAME) or "anon"
+    with _presence_lock:
+        if payload.get("leave"):
+            if target in _presence:
+                _presence[target].pop(token, None)
+        else:
+            _presence.setdefault(target, {})[token] = (time.time(), bool(payload.get("listening")))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/presence")
+def api_presence():
+    return JSONResponse(_presence_counts())
+
+
+@app.get("/api/presence/stream")
+async def api_presence_stream(request: Request):
+    """Server-Sent Events: push viewer counts the instant they change, so the
+    dashboard and cameras page update live without polling."""
+    import asyncio
+    import json as _json
+
+    async def gen():
+        last = None
+        idle = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            payload = _json.dumps(_presence_counts(), sort_keys=True)
+            if payload != last:
+                last = payload
+                idle = 0
+                yield f"data: {payload}\n\n"
+            else:
+                idle += 1
+                if idle >= 30:      # ~15s comment keeps the connection warm
+                    idle = 0
+                    yield ": keepalive\n\n"
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------

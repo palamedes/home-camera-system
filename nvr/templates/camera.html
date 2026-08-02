@@ -179,6 +179,14 @@ function pingPresence() {
 }
 pingPresence();
 setInterval(pingPresence, 8000);
+// Drop out of the count immediately on leaving, rather than waiting for the TTL.
+window.addEventListener('pagehide', () => {
+  const target = presenceVcamId != null ? 'vcam:' + presenceVcamId : CAMERA_ID;
+  try {
+    navigator.sendBeacon('/api/presence/ping',
+      new Blob([JSON.stringify({ target, leave: true })], { type: 'application/json' }));
+  } catch (_) {}
+});
 
 const audioBtn = document.getElementById('audio-btn');
 audioBtn.addEventListener('click', () => {

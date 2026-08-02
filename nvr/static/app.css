@@ -416,6 +416,17 @@ input:focus, select:focus {
 /* Camera settings rows: controls have different heights (the retention select
    carries a label), so bottom-align everything to a common baseline. */
 .list-cameras .list-item { align-items: flex-end; }
+/* Settings: Users and System side by side. */
+.settings-cols { display: flex; gap: 16px; align-items: flex-start; margin-top: 22px; flex-wrap: wrap; }
+.settings-cols > .panel { flex: 1; min-width: 300px; }
+a.title { color: var(--text); }
+a.title:hover { color: var(--accent); }
+.remove-x {
+  background: transparent; border: none; color: var(--bad);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 8px;
+  border-radius: 6px; flex: none;
+}
+.remove-x:hover { background: rgb(239 68 68 / .12); }
 .list-cameras .checkbox { padding-bottom: 2px; }
 .list-item .title { font-weight: 550; font-size: 14.5px; }
 .title-row { display: flex; align-items: center; gap: 6px; }

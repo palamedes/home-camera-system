@@ -117,6 +117,7 @@
 
 {% block scripts %}
 <script src="/static/live.js"></script>
+<script src="/static/presence.js"></script>
 {% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 // Live substream video per tile. The sub is low-res and passes through as
@@ -125,25 +126,7 @@
 initLiveTiles();
 if (typeof initVirtualTiles === 'function') initVirtualTiles();
 
-// Live viewer counts: how many people are on each camera's single live view
-// (and how many with audio). Grid tiles here don't count themselves.
-async function pollPresence() {
-  try {
-    const counts = await (await fetch('/api/presence')).json();
-    document.querySelectorAll('[data-presence]').forEach(el => {
-      const c = counts[el.dataset.presence];
-      if (c && c.watching > 0) {
-        el.textContent = `👁 ${c.watching}` + (c.listening ? ` 🔊 ${c.listening}` : '');
-        el.title = `${c.watching} watching`
-          + (c.listening ? `, ${c.listening} with audio` : '');
-        el.hidden = false;
-      } else {
-        el.hidden = true;
-      }
-    });
-  } catch (_) {}
-}
-pollPresence();
-setInterval(pollPresence, 8000);
+// Live viewer counts, pushed from the server (grid tiles here don't count).
+initPresence();
 </script>
 {% endblock %}

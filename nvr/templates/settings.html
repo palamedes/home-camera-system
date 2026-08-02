@@ -50,7 +50,7 @@
     <div class="list-item" data-camera="{{ camera.id }}">
       <div class="grow">
         <div class="title-row">
-          <span class="title" data-name>{{ camera.name }}</span>
+          <a class="title" data-name href="/cameras/{{ camera.id }}">{{ camera.name }}</a>
           <button class="icon-btn" data-rename title="Rename" aria-label="Rename camera">
             <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z" fill="none"
@@ -104,9 +104,8 @@
                {{ 'checked' if camera.viewer_visible }}>
         <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
       </div>
-      <a class="btn btn-sm" href="/cameras/{{ camera.id }}">View</a>
       <a class="btn btn-sm" href="/cameras/{{ camera.id }}/history">History</a>
-      <button class="btn btn-sm btn-danger" data-delete>Remove</button>
+      <button class="remove-x" data-delete title="Remove camera" aria-label="Remove">&times;</button>
     </div>
     {% else %}
     <div class="list-item"><span class="muted">No cameras yet.</span></div>
@@ -124,7 +123,10 @@
     <div class="list-item" data-vcam-row="{{ v.id }}">
       <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
       <div class="grow">
-        <div class="title">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></div>
+        <div class="title">
+          <a href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">{{ v.name }}</a>
+          <span class="vcam-from">from {{ v.parent_name }}</span>
+        </div>
         <div class="sub small">dewarped 360 view</div>
       </div>
       <div class="checkbox">
@@ -132,17 +134,17 @@
                {{ 'checked' if v.viewer_visible }}>
         <label for="vvis-{{ v.id }}" title="Whether viewer accounts can see this virtual camera">Viewers</label>
       </div>
-      <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">View</a>
       <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}/history?vcam={{ v.id }}">History</a>
-      <button class="btn btn-sm btn-danger" data-vcam-del="{{ v.id }}">Remove</button>
+      <button class="remove-x" data-vcam-del="{{ v.id }}" title="Remove virtual camera" aria-label="Remove">&times;</button>
     </div>
     {% endfor %}
   </div>
 </div>
 {% endif %}
 
+<div class="settings-cols">
 {% if is_admin %}
-<div class="panel" style="margin-top: 22px;">
+<div class="panel">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
     <h2 style="margin: 0; font-size: 16px;">Users</h2>
     <button class="btn btn-sm btn-primary" id="add-user-btn">Add user</button>
@@ -170,11 +172,12 @@
 </div>
 {% endif %}
 
-<div class="panel panel-pad" style="margin-top: 22px;">
+<div class="panel panel-pad">
   <h2 style="margin: 0 0 12px; font-size: 16px;">System</h2>
   <div class="list" id="system-status">
     <div class="list-item"><span class="muted">Loading&hellip;</span></div>
   </div>
+</div>
 </div>
 
 {% if is_admin %}
@@ -341,9 +344,10 @@ document.querySelectorAll('[data-rename]').forEach(button => {
       if (done) return;
       done = true;
       const next = input.value.trim();
-      const label = document.createElement('span');
+      const label = document.createElement('a');   // the name is a link
       label.className = 'title';
       label.setAttribute('data-name', '');
+      label.href = `/cameras/${encodeURIComponent(id)}`;
 
       if (save && next && next !== current) {
         try {

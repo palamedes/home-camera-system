@@ -67,6 +67,7 @@
           <div class="mini-label">
             <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
             <span class="truncate">{{ camera.name }}</span>
+            <span class="viewers" data-presence="{{ camera.id }}" hidden></span>
           </div>
         </a>
         {% endfor %}
@@ -85,6 +86,7 @@
           <div class="mini-label">
             <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
             <span class="truncate">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></span>
+            <span class="viewers" data-presence="vcam:{{ v.id }}" hidden></span>
           </div>
         </div>
         {% endfor %}
@@ -104,6 +106,7 @@
 
 {% block scripts %}
 <script src="/static/live.js"></script>
+<script src="/static/presence.js"></script>
 {% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 // "Last prune" timestamp in the storage strip.
@@ -119,5 +122,8 @@ initLiveTiles();
 
 // Virtual cameras: dewarp the parent stream to each saved angle in the browser.
 if (typeof initVirtualTiles === 'function') initVirtualTiles();
+
+// Live viewer counts via server push.
+initPresence();
 </script>
 {% endblock %}
