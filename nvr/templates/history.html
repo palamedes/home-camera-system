@@ -24,7 +24,7 @@
 </div>
 {% else %}
 
-<div class="player history-player" id="player">
+<div class="player player-fixed" id="player">
   <video id="video" {% if vcam %}muted{% else %}controls{% endif %} autoplay playsinline></video>
   {% if vcam %}<canvas id="dewarp"></canvas>{% endif %}
   <div class="player-status" id="status">Pick a time below to start playback</div>

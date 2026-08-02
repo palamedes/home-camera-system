@@ -23,17 +23,8 @@ function initReplay(opts) {
   const supported = typeof MediaRecorder !== 'undefined' && scrub && label;
   if (!supported) { if (container) container.hidden = true; return null; }
 
-  // Swapping the <video> source briefly drops its intrinsic size to 0, which
-  // would collapse the player box on every buffer-segment boundary. Freeze the
-  // player's height while replaying so the view stays put.
-  const player = video.closest('.player');
-  function freezePlayer() {
-    if (player && !player.style.height) player.style.height = player.offsetHeight + 'px';
-  }
-  function unfreezePlayer() {
-    if (player) player.style.height = '';
-  }
-
+  // The player has a fixed CSS height (.player-fixed), so swapping the <video>
+  // source during replay can't collapse the box — no runtime size juggling.
   const mime = ['video/webm;codecs=vp8', 'video/webm', 'video/mp4']
     .find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
 
@@ -109,7 +100,6 @@ function initReplay(opts) {
   function goLive() {
     mode = 'live';
     current = null;
-    unfreezePlayer();
     video.removeAttribute('src');
     try { video.load(); } catch (_) {}
     if (liveStream) { try { video.srcObject = liveStream; } catch (_) {} }
@@ -129,7 +119,6 @@ function initReplay(opts) {
   function replayAt(t) {
     const seg = segmentAt(t);
     if (!seg) { goLive(); return; }
-    freezePlayer();          // lock the box before the first source swap
     mode = 'replay';
     label.classList.add('rewound');
     if (current !== seg) {
