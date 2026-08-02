@@ -131,9 +131,12 @@ class CameraRecorder:
             self.start()
             return
         if self.process.poll() is None:
-            # Healthy for a while: forgive earlier failures.
+            # Healthy for a while: forgive earlier failures. Clear last_error too,
+            # or a one-off blip (e.g. go2rtc restarting) keeps showing on the
+            # camera page long after recording recovered.
             if self.started_at and time.time() - self.started_at > 60:
                 self.backoff = 1.0
+                self.last_error = None
             return
 
         stderr = ""
