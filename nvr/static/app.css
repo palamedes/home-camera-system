@@ -478,6 +478,10 @@ a.title:hover { color: var(--accent); }
   border: 1px solid var(--line);
 }
 .player video, .player img { width: 100%; display: block; max-height: 76vh; object-fit: contain; background: #000; }
+/* Once locked (history scrubbing), the video fills the frozen player box so a
+   source swap can't resize it. */
+.player.locked { max-height: none; }
+.player.locked video { height: 100%; max-height: none; }
 /* Dewarp canvas covers the still-decoding video; never display:none the video
    or some browsers throttle its decoder. */
 #dewarp {
