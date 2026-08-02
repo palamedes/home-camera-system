@@ -494,6 +494,7 @@ def settings_page(request: Request):
     return render(
         request, "settings.html",
         cameras=[dict(row) for row in db.cameras()],
+        virtuals=virtual_view_models(request),
         storage=retention.estimate(),
         config=cfg,
         users=[_user_dict(u) for u in db.users()] if auth.is_admin(me) else [],

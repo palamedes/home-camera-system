@@ -41,7 +41,7 @@
     <h2 style="margin: 0; font-size: 16px;">Cameras</h2>
     <a class="btn btn-sm btn-primary" href="/discover">Add camera</a>
   </div>
-  <div class="list">
+  <div class="list list-cameras">
     {% set retentions = [
       ('28800', '8 hours'), ('86400', '1 day'), ('259200', '3 days'),
       ('604800', '7 days'), ('1209600', '14 days'), ('2592000', '30 days')
@@ -101,6 +101,28 @@
     {% endfor %}
   </div>
 </div>
+
+{% if virtuals %}
+<div class="panel" style="margin-top: 22px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
+    <h2 style="margin: 0; font-size: 16px;">Virtual cameras</h2>
+  </div>
+  <div class="list">
+    {% for v in virtuals %}
+    <div class="list-item" data-vcam-row="{{ v.id }}">
+      <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
+      <div class="grow">
+        <div class="title">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></div>
+        <div class="sub small">dewarped 360 view</div>
+      </div>
+      <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">View</a>
+      <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}/history?vcam={{ v.id }}">History</a>
+      <button class="btn btn-sm btn-danger" data-vcam-del="{{ v.id }}">Remove</button>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 {% if is_admin %}
 <div class="panel" style="margin-top: 22px;">
@@ -330,6 +352,17 @@ document.querySelectorAll('[data-rename]').forEach(button => {
       else if (event.key === 'Escape') commit(false);
     });
     input.addEventListener('blur', () => commit(true));
+  });
+});
+
+document.querySelectorAll('[data-vcam-del]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const row = btn.closest('[data-vcam-row]');
+    const name = row.querySelector('.title').textContent.trim();
+    if (!confirm(`Remove the virtual camera "${name}"?`)) return;
+    const r = await fetch(`/api/virtual/${btn.dataset.vcamDel}`, { method: 'DELETE' });
+    if (r.ok) row.remove();
+    else alert('Could not remove it.');
   });
 });
 

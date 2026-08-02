@@ -96,9 +96,8 @@
     <div class="tile-body">
       <div class="tile-name">
         <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
-        <span class="truncate">{{ v.name }}</span>
+        <span class="truncate">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></span>
       </div>
-      <div class="tile-meta"><span>from {{ v.parent_name }}</span></div>
     </div>
   </a>
   {% endfor %}

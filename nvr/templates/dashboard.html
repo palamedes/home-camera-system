@@ -82,7 +82,7 @@
           </a>
           <div class="mini-label">
             <span class="dot {{ 'dot-ok' if v.online else 'dot-bad' }}"></span>
-            <span class="truncate">{{ v.name }}</span>
+            <span class="truncate">{{ v.name }} <span class="vcam-from">from {{ v.parent_name }}</span></span>
             {% if is_admin %}
             <button class="vcam-del" data-vcam-del="{{ v.id }}" title="Remove virtual camera" aria-label="Remove">&times;</button>
             {% endif %}

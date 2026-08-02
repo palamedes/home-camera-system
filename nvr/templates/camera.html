@@ -5,7 +5,7 @@
 
 <div class="page-head">
   <div>
-    <h1>{{ camera.name }}{% if camera.fisheye %} <span class="tag-360">360°</span>{% endif %}</h1>
+    <h1><span id="camera-title">{{ camera.name }}</span>{% if camera.fisheye %} <span class="tag-360" id="tag-360">360°</span>{% endif %}</h1>
     <p>
       {{ camera.model or camera.brand or 'Camera' }} &middot;
       <span class="mono">{{ camera.host }}</span>
@@ -330,6 +330,12 @@ if (!fisheye) {
         if (data && data.calib) fisheye.setCalib(data.calib);
         if (data) fisheye.setView({ yaw: data.yaw, pitch: data.pitch, fov: data.fov });
         editing = { id: data.id, name: data.name };
+        // Show the virtual camera's own name at the top, not the parent 360's.
+        const title = document.getElementById('camera-title');
+        if (title) title.textContent = data.name;
+        const tag = document.getElementById('tag-360');
+        if (tag) tag.remove();
+        document.title = `${data.name} — Sentry`;
         // Point History at this virtual camera's dewarped recording.
         const hist = document.getElementById('history-link');
         if (hist) hist.href = `/cameras/{{ camera.id }}/history?vcam=${data.id}`;

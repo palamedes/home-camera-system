@@ -39,7 +39,9 @@ function initReplay(opts) {
 
   let segments = [];      // { start, end, url }
   let liveStream = null;
-  let recorder = null;
+  let currentRec = null;
+  let recStream = null;
+  let segStartedAt = 0;
   let mode = 'live';      // 'live' | 'replay'
   let current = null;     // segment being played in replay
 
@@ -52,29 +54,17 @@ function initReplay(opts) {
     }
   }
 
-  // Roll a fresh recorder every SEG_SECONDS, each producing a self-contained,
-  // seekable blob. Keeps buffering even while replaying — the recorder reads
-  // the live MediaStream directly, not whatever the <video> element is showing
-  // — so returning to live has no gap.
-  function roll() {
-    // Track the freshest live stream while we're actually live (it changes on
-    // a reconnect or an audio toggle); during replay keep the last one.
-    if (mode === 'live') {
-      const s = video.srcObject;
-      if (s && s.getTracks && s.getTracks().length) liveStream = s;
+  function stopSegment() {
+    if (currentRec && currentRec.state !== 'inactive') {
+      try { currentRec.stop(); } catch (_) {}
     }
-    if (!liveStream || !liveStream.getTracks().length) {
-      setTimeout(roll, 500);   // live stream not attached yet
-      return;
-    }
-    const stream = liveStream;
+  }
+
+  function startSegment(stream) {
     let rec;
     try {
       rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    } catch (_) {
-      if (container) container.hidden = true;
-      return;
-    }
+    } catch (_) { if (container) container.hidden = true; return; }
     const start = now();
     const chunks = [];
     rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -84,11 +74,30 @@ function initReplay(opts) {
         segments.push({ start, end: now(), url: URL.createObjectURL(blob) });
         prune();
       }
-      roll();   // immediately begin the next segment
     };
-    recorder = rec;
     try { rec.start(); } catch (_) { if (container) container.hidden = true; return; }
-    setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, SEG_SECONDS * 1000);
+    currentRec = rec; recStream = stream; segStartedAt = now();
+  }
+
+  // A 1-second heartbeat keeps one recorder running on the freshest live
+  // stream, cutting a self-contained seekable segment every SEG_SECONDS. Driven
+  // by a timer rather than chaining recorder.onstop so it self-heals when the
+  // stream changes — toggling audio rebuilds the WebRTC session with a new
+  // stream — or the recorder dies. It buffers even during replay: the live
+  // tracks stay up on the WebRTC connection, so returning to live has no gap.
+  function heartbeat() {
+    if (mode === 'live') {
+      const s = video.srcObject;
+      if (s && s.getTracks && s.getTracks().length) liveStream = s;
+    }
+    if (!liveStream || !liveStream.getTracks().length) return;
+    if (!currentRec || currentRec.state === 'inactive' || recStream !== liveStream) {
+      stopSegment();
+      startSegment(liveStream);
+    } else if (now() - segStartedAt >= SEG_SECONDS) {
+      stopSegment();
+      startSegment(liveStream);
+    }
   }
 
   function fmt(behind) {
@@ -104,11 +113,11 @@ function initReplay(opts) {
     video.removeAttribute('src');
     try { video.load(); } catch (_) {}
     if (liveStream) { try { video.srcObject = liveStream; } catch (_) {} }
-    video.muted = true;
+    // Don't force-mute: leave whatever the Audio button set, so returning from
+    // a rewind keeps live audio if it was on.
     video.play().catch(() => {});
     label.textContent = 'LIVE';
     label.classList.remove('rewound');
-    if (!recorder || recorder.state === 'inactive') roll();
   }
 
   function segmentAt(t) {
@@ -167,8 +176,9 @@ function initReplay(opts) {
     label.textContent = fmt(behind);
   });
 
-  roll();
-  return { goLive };
+  const beat = setInterval(heartbeat, 1000);
+  heartbeat();
+  return { goLive, stop() { clearInterval(beat); stopSegment(); } };
 }
 
 window.initReplay = initReplay;
