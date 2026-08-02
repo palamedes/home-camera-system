@@ -29,6 +29,24 @@ import yaml
 log = logging.getLogger("nvr.streams")
 
 
+def stream_online(info: dict[str, Any] | None) -> bool:
+    """Whether a go2rtc stream has a producer that is actually connected.
+
+    go2rtc producers carry no "state" field. A configured-but-idle producer is
+    reported as just {"url": ...} — go2rtc connects to cameras on demand — while
+    a live one gains "bytes_recv" and a populated "receivers" list once it is
+    pulling from the camera. Presence of either is the reliable liveness signal;
+    an earlier check for a non-existent "state" key marked every healthy camera
+    offline.
+    """
+    if not info:
+        return False
+    for producer in info.get("producers") or []:
+        if producer.get("bytes_recv") or (producer.get("receivers") or []):
+            return True
+    return False
+
+
 def main_stream_name(camera_id: str) -> str:
     return camera_id
 
@@ -176,12 +194,8 @@ class Go2rtcManager:
             return {}
 
     def is_online(self, camera_id: str) -> bool:
-        """A stream is 'online' once go2rtc holds a live producer for it."""
-        info = self.stream_status().get(main_stream_name(camera_id))
-        if not info:
-            return False
-        producers = info.get("producers") or []
-        return any(p.get("state") not in (None, "closed") for p in producers)
+        """Whether go2rtc currently has a live producer for the main stream."""
+        return stream_online(self.stream_status().get(main_stream_name(camera_id)))
 
     def snapshot(self, camera_id: str, prefer_sub: bool = True) -> bytes | None:
         """Single JPEG frame, for camera tiles.

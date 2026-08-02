@@ -89,7 +89,7 @@ function useMjpeg({ stream, video, fallback, status, modeLabel }) {
   if (modeLabel) modeLabel.textContent = 'MJPEG fallback';
 }
 
-async function startLive(options) {
+async function startLive(options, attempt = 0) {
   const { status, modeLabel } = options;
   try {
     const pc = await tryWebRTC(options);
@@ -106,6 +106,17 @@ async function startLive(options) {
       }
     });
   } catch (error) {
+    // go2rtc connects to the camera on demand, so the very first offer after a
+    // page load can arrive before the producer is warm and fail once. Retry a
+    // couple of times before falling back — this is what a manual reload was
+    // doing by hand.
+    if (attempt < 2) {
+      console.warn(`WebRTC attempt ${attempt + 1} failed (${error.message}); retrying`);
+      status.classList.remove('hidden');
+      status.innerHTML = '<span class="spinner"></span>';
+      setTimeout(() => startLive(options, attempt + 1), 1500);
+      return;
+    }
     console.warn('WebRTC unavailable, falling back to MJPEG:', error.message);
     useMjpeg(options);
   }

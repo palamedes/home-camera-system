@@ -44,6 +44,11 @@ templates.env.filters["human_size"] = config_module.human_size
 async def lifespan(_app: FastAPI):
     db.purge_expired_sessions()
     go2rtc.start()
+    # Let go2rtc's RTSP port come up before recorders reach for it, or the
+    # first recording attempt hits connection-refused, backs off, and leaves a
+    # spurious restart in the status panel. It self-heals either way.
+    if not go2rtc.wait_ready(timeout=15.0):
+        log.warning("go2rtc did not report ready within 15s; starting recorders anyway")
     recording.start()
     retention.start()
     log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
@@ -185,9 +190,8 @@ def camera_view_models() -> list[dict[str, Any]]:
     status = go2rtc.stream_status()
     recorder_status = recording.status()
     for camera in cameras:
-        info = status.get(streams.main_stream_name(camera["id"])) or {}
-        producers = info.get("producers") or []
-        camera["online"] = any(p.get("state") not in (None, "closed") for p in producers)
+        info = status.get(streams.main_stream_name(camera["id"]))
+        camera["online"] = streams.stream_online(info)
         camera["recorder"] = recorder_status.get(camera["id"], {})
         camera["stats"] = db.camera_stats(camera["id"])
     return cameras
@@ -270,9 +274,8 @@ def api_cameras():
     for row in db.cameras():
         camera = dict(row)
         camera.pop("password", None)
-        info = status.get(streams.main_stream_name(camera["id"])) or {}
-        producers = info.get("producers") or []
-        camera["online"] = any(p.get("state") not in (None, "closed") for p in producers)
+        info = status.get(streams.main_stream_name(camera["id"]))
+        camera["online"] = streams.stream_online(info)
         camera["stats"] = db.camera_stats(camera["id"])
         result.append(camera)
     return JSONResponse(result)
