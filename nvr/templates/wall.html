@@ -26,6 +26,9 @@
       min-width: 0; min-height: 0;
     }
     .wall-cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* Virtual-camera cell: the parent video decodes behind an opaque dewarp canvas. */
+    .vcam-cell video { position: absolute; inset: 0; opacity: 0; }
+    .vcam-cell canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     .wall-off { color: #555; font: 500 14px system-ui, sans-serif; }
     /* Camera name: hidden until you hover a tile, so nothing sits over the
        video by default. */
@@ -75,12 +78,24 @@
       <div class="wall-cell wall-off">{{ camera.name }} — offline</div>
       {% endif %}
     {% endfor %}
+    {% for v in virtuals %}
+      {% if v.online %}
+      <div class="wall-cell vcam-cell" data-vcam data-stream="{{ v.stream }}"
+           data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+        <video muted playsinline></video><canvas></canvas>
+        <span class="wall-name">{{ v.name }}</span>
+      </div>
+      {% else %}
+      <div class="wall-cell wall-off">{{ v.name }} — offline</div>
+      {% endif %}
+    {% endfor %}
   </div>
 
-  {% if not cameras %}<div class="wall-empty">No cameras to show</div>{% endif %}
+  {% if not cameras and not virtuals %}<div class="wall-empty">No cameras to show</div>{% endif %}
   <div class="wall-hint" id="hint">Press Esc to exit</div>
 
   <script src="/static/live.js"></script>
+  {% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
   <script>
     const wall = document.getElementById('wall');
 
@@ -108,6 +123,7 @@
     window.addEventListener('resize', layout);
     layout();
     initLiveTiles();
+    if (typeof initVirtualTiles === 'function') initVirtualTiles();
 
     // Esc, or the browser back gesture, returns to the normal view.
     document.addEventListener('keydown', event => {

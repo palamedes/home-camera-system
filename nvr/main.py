@@ -419,9 +419,14 @@ def cameras_page(request: Request):
 
 @app.get("/wall", response_class=HTMLResponse)
 def wall(request: Request):
-    """Chromeless video wall: every camera tiled to fill the viewport."""
+    """Chromeless video wall: every camera (and virtual camera) tiled to fill
+    the viewport."""
     cameras = [c for c in camera_view_models(request) if c["show_on_grid"]]
-    return render(request, "wall.html", cameras=cameras)
+    return render(
+        request, "wall.html",
+        cameras=cameras,
+        virtuals=virtual_view_models(request),
+    )
 
 
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)

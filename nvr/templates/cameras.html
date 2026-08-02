@@ -8,8 +8,7 @@
     <p>{{ total }} camera{{ '' if total == 1 else 's' }}{% if virtuals %} &middot; {{ virtuals|length }} virtual{% endif %}</p>
   </div>
   <div class="row" style="flex: 0 0 auto;">
-    {% if cameras %}<a href="/wall" class="btn">Wall view</a>{% endif %}
-    {% if is_admin %}<a href="/discover" class="btn btn-primary">Add camera</a>{% endif %}
+    {% if cameras or virtuals %}<a href="/wall" class="btn">Wall view</a>{% endif %}
   </div>
 </div>
 

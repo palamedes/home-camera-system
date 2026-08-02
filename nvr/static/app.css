@@ -571,6 +571,7 @@ input:focus, select:focus {
   align-items: start;
 }
 .card-wide { grid-column: span 2; }
+.card-full { grid-column: 1 / -1; }   /* spans every column, its own row */
 @media (max-width: 780px) { .card-wide { grid-column: span 1; } }
 
 .card {
