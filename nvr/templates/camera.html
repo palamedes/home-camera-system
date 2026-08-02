@@ -44,7 +44,11 @@
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
-  <span class="spacer"></span>
+  <div class="replay" id="replay" title="Drag left to rewind the last few minutes">
+    <span class="replay-label" id="replay-label">LIVE</span>
+    <input type="range" id="replay-scrub" min="0" max="180" value="180" step="1"
+           aria-label="Instant replay — drag left to rewind">
+  </div>
   <span class="muted small" id="mode-label"></span>
 </div>
 
@@ -116,6 +120,7 @@
 
 {% block scripts %}
 <script src="/static/live.js"></script>
+<script src="/static/replay.js"></script>
 {% if camera.fisheye %}<script src="/static/fisheye.js"></script>{% endif %}
 <script>
 document.querySelectorAll('#oldest, #newest').forEach(el => {
@@ -148,6 +153,16 @@ const liveOptions = {
   audio: false,
 };
 startLive(liveOptions);
+
+// Instant replay: rolling in-browser buffer of the live substream, scrubbed
+// from the toolbar. Records whatever is playing live, so it also captures the
+// audio track when audio is on.
+const replay = initReplay({
+  video: liveOptions.video,
+  scrub: document.getElementById('replay-scrub'),
+  label: document.getElementById('replay-label'),
+  container: document.getElementById('replay'),
+});
 
 const audioBtn = document.getElementById('audio-btn');
 audioBtn.addEventListener('click', () => {

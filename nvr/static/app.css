@@ -507,6 +507,32 @@ input:focus, select:focus {
 }
 .toolbar .spacer { flex: 1; }
 
+/* Instant-replay scrubber: fills the space between Fullscreen and the mode label. */
+.replay { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 120px; }
+.replay-label {
+  font: 600 12px ui-monospace, monospace;
+  color: var(--muted);
+  min-width: 42px; text-align: right;
+}
+.replay-label.rewound { color: var(--warn); }
+.replay input[type=range] {
+  flex: 1; width: auto; margin: 0; padding: 0;
+  -webkit-appearance: none; appearance: none;
+  height: 4px; border-radius: 3px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  cursor: pointer;
+}
+.replay input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel);
+  cursor: grab;
+}
+.replay input[type=range]::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel); cursor: grab;
+}
+
 /* ---- timeline ---- */
 
 .timeline-wrap { margin-top: 16px; }
