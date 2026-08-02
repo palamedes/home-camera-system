@@ -28,6 +28,13 @@ import yaml
 
 log = logging.getLogger("nvr.streams")
 
+# Health-check tuning for a go2rtc that's alive but not actually serving (it
+# started while its ports were still held and bound nothing). Give a fresh
+# process time to bind before probing, then require a few consecutive failures
+# — at the supervisor's 5s cadence — before deciding it's wedged.
+HEALTH_GRACE_SECONDS = 20.0
+HEALTH_FAIL_THRESHOLD = 3
+
 
 def stream_online(info: dict[str, Any] | None) -> bool:
     """Whether a go2rtc stream has a producer that is actually connected.
@@ -74,6 +81,8 @@ class Go2rtcManager:
         self.process: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._last_config: str | None = None
+        self._spawned_at: float = 0.0
+        self._health_failures = 0
 
     # ---- config ----------------------------------------------------------
 
@@ -151,6 +160,8 @@ class Go2rtcManager:
             stderr=subprocess.STDOUT,
             cwd=str(self.config.data_dir),
         )
+        self._spawned_at = time.monotonic()
+        self._health_failures = 0
         log.info("go2rtc started (pid %s), logging to %s", self.process.pid, log_path)
 
     def reload(self) -> None:
@@ -182,12 +193,42 @@ class Go2rtcManager:
             self._stop_locked()
 
     def ensure_running(self) -> None:
-        """Restart go2rtc if it died. Called by the supervisor loop."""
+        """Restart go2rtc if it died — or if it's alive but not serving.
+
+        Called by the supervisor loop. A liveness check alone isn't enough: a
+        go2rtc that started while its ports were still held by a previous
+        instance stays alive but binds nothing — no API, no RTSP, no streams —
+        and would otherwise wedge there forever. So once a process is past its
+        startup grace period we also probe the API and restart a hollow one.
+        """
         with self._lock:
             if self.process is None or self.process.poll() is not None:
                 log.warning("go2rtc not running; restarting")
                 self.process = None
                 self._spawn()
+                return
+
+            # Alive — but give it time to bind before holding it to answering.
+            if time.monotonic() - self._spawned_at < HEALTH_GRACE_SECONDS:
+                return
+            if self._api_healthy():
+                self._health_failures = 0
+                return
+            self._health_failures += 1
+            if self._health_failures >= HEALTH_FAIL_THRESHOLD:
+                log.warning(
+                    "go2rtc alive but API unresponsive (%d checks); restarting",
+                    self._health_failures,
+                )
+                self._stop_locked()
+                self._spawn()
+
+    def _api_healthy(self) -> bool:
+        try:
+            resp = httpx.get(f"{self.config.go2rtc.api_base}/api", timeout=1.0)
+            return resp.status_code < 500
+        except Exception:
+            return False
 
     # ---- status ----------------------------------------------------------
 
