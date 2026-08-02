@@ -15,6 +15,24 @@
  * camera's codec outright.
  */
 
+// Every peer connection we open, so we can close them when the page goes away.
+// A closed WebRTC connection makes go2rtc drop its consumer promptly; without
+// this, navigating between pages leaves consumers lingering until go2rtc's own
+// consent timeout reaps them.
+const activePeers = new Set();
+
+function trackPeer(pc) {
+  activePeers.add(pc);
+  pc.addEventListener('connectionstatechange', () => {
+    if (["closed", "failed"].includes(pc.connectionState)) activePeers.delete(pc);
+  });
+}
+
+window.addEventListener("pagehide", () => {
+  activePeers.forEach(pc => { try { pc.close(); } catch (_) {} });
+  activePeers.clear();
+});
+
 async function waitForIce(pc, timeoutMs = 2500) {
   if (pc.iceGatheringState === 'complete') return;
   await new Promise(resolve => {
@@ -32,6 +50,7 @@ async function waitForIce(pc, timeoutMs = 2500) {
 
 async function tryWebRTC({ stream, video, audio = true }) {
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+  trackPeer(pc);
 
   const media = new MediaStream();
   pc.addTransceiver('video', { direction: 'recvonly' });
@@ -74,7 +93,9 @@ async function tryWebRTC({ stream, video, audio = true }) {
     });
   });
 
-  status.classList.add('hidden');
+  // NOTE: do not touch the status overlay here — `status` is not in scope in
+  // this function (it would resolve to window.status and throw right after a
+  // successful connect). Hiding the overlay is the caller's job.
   return pc;
 }
 

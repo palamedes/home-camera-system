@@ -128,13 +128,17 @@ class Go2rtcManager:
             return
         if not shutil.which("ffmpeg"):
             log.warning("ffmpeg not on PATH; go2rtc fallbacks will fail")
+        # Capture go2rtc's own logs (truncated each start) so WebRTC/ICE
+        # problems are diagnosable instead of vanishing into /dev/null.
+        log_path = self.config.data_dir / "go2rtc.log"
+        self._log_handle = open(log_path, "w")
         self.process = subprocess.Popen(
             [str(binary), "-config", str(self.config.go2rtc_config_path)],
-            stdout=subprocess.DEVNULL,
+            stdout=self._log_handle,
             stderr=subprocess.STDOUT,
             cwd=str(self.config.data_dir),
         )
-        log.info("go2rtc started (pid %s)", self.process.pid)
+        log.info("go2rtc started (pid %s), logging to %s", self.process.pid, log_path)
 
     def reload(self) -> None:
         """Regenerate config and restart if the stream set changed.
