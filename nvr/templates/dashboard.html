@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p id="clock">&nbsp;</p>
+  </div>
+  <a href="/cameras" class="btn btn-primary">View cameras</a>
+</div>
+
+<div class="stats" style="margin-bottom: 24px;">
+  <div class="stat">
+    <div class="k">Cameras</div>
+    <div class="v">{{ online }} / {{ cameras|length }}</div>
+    <div class="n">{{ 'online' if cameras else 'none configured' }}</div>
+  </div>
+  <div class="stat">
+    <div class="k">Recording</div>
+    <div class="v">{{ recording_count }}</div>
+    <div class="n">continuous</div>
+  </div>
+  <div class="stat">
+    <div class="k">Stored</div>
+    <div class="v">{{ storage.used_bytes | human_size }}</div>
+    <div class="n">of {{ storage.quota_bytes | human_size }}</div>
+    {% set pct = (storage.used_bytes / storage.quota_bytes * 100) if storage.quota_bytes else 0 %}
+    <div class="bar {{ 'crit' if pct > 92 else 'hot' if pct > 75 else '' }}">
+      <span style="width: {{ [pct, 100] | min }}%"></span>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="k">Retention</div>
+    <div class="v">
+      {% if storage.projected_days %}{{ '%.1f' % storage.projected_days }}d
+      {% else %}&mdash;{% endif %}
+    </div>
+    <div class="n">limit {{ storage.max_age_days }} days</div>
+  </div>
+</div>
+
+<div class="cards">
+
+  <section class="card card-wide">
+    <div class="card-head">
+      <h2>Cameras</h2>
+      <a href="/cameras" class="card-action">View all &rarr;</a>
+    </div>
+    <div class="card-body">
+      {% if cameras %}
+      <div class="mini-grid">
+        {% for camera in cameras[:4] %}
+        <a class="mini" href="/cameras/{{ camera.id }}">
+          <div class="mini-media">
+            {% if camera.online %}
+              <img data-snapshot="{{ camera.id }}" alt="{{ camera.name }}"
+                   src="/api/cameras/{{ camera.id }}/snapshot.jpg">
+            {% else %}
+              <div class="placeholder">Offline</div>
+            {% endif %}
+          </div>
+          <div class="mini-label">
+            <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
+            <span class="truncate">{{ camera.name }}</span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% if cameras|length > 4 %}
+      <p class="muted small" style="margin: 12px 0 0;">
+        and {{ cameras|length - 4 }} more
+      </p>
+      {% endif %}
+      {% else %}
+      <div class="card-empty">
+        <p class="muted">No cameras yet.</p>
+        <a href="/discover" class="btn btn-sm">Scan the network</a>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>System</h2>
+      <a href="/settings" class="card-action">Settings &rarr;</a>
+    </div>
+    <div class="card-body">
+      <div class="list" id="system-status">
+        <div class="list-item"><span class="muted small">Loading&hellip;</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Storage</h2>
+    </div>
+    <div class="card-body">
+      <dl class="kv">
+        <div><dt>Disk free</dt><dd>{{ storage.disk_free | human_size }}</dd></div>
+        <div><dt>Disk total</dt><dd>{{ storage.disk_total | human_size }}</dd></div>
+        <div>
+          <dt>Write rate</dt>
+          <dd>
+            {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}/day
+            {% else %}measuring&hellip;{% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Last prune</dt>
+          <dd data-ts="{{ storage.last_run or '' }}">never</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <!--
+    Adding a panel: copy one <section class="card">, give it a heading and a
+    body. The grid reflows on its own; add class="card-wide" to span two
+    columns.
+  -->
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function tick() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleString([], {
+      weekday: 'long', month: 'long', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+}
+tick();
+setInterval(tick, 30000);
+
+document.querySelectorAll('dd[data-ts]').forEach(el => {
+  const ts = parseFloat(el.dataset.ts);
+  if (ts) el.textContent = new Date(ts * 1000).toLocaleTimeString([], {
+    hour: 'numeric', minute: '2-digit',
+  });
+});
+
+setInterval(() => {
+  document.querySelectorAll('img[data-snapshot]').forEach(img => {
+    img.src = `/api/cameras/${img.dataset.snapshot}/snapshot.jpg?t=${Date.now()}`;
+  });
+}, 15000);
+
+(async function loadStatus() {
+  const container = document.getElementById('system-status');
+  const row = (title, detail, dot) => `<div class="list-item">
+      <span class="dot ${dot}"></span>
+      <div class="grow"><div class="title small">${title}</div>
+      <div class="sub">${detail}</div></div>
+    </div>`;
+  try {
+    const data = await (await fetch('/api/status')).json();
+    const rows = [row('Stream engine',
+      data.go2rtc_running ? 'Running' : 'Stopped',
+      data.go2rtc_running ? 'dot-ok' : 'dot-bad')];
+    const recorders = Object.entries(data.recorders || {});
+    if (!recorders.length) rows.push(row('Recorders', 'None active', 'dot-warn'));
+    for (const [id, r] of recorders) {
+      rows.push(row(id,
+        r.running ? `Recording · ${Math.floor(r.uptime / 60)} min` : (r.last_error || 'Stopped'),
+        r.running ? 'dot-ok' : 'dot-bad'));
+    }
+    container.innerHTML = rows.join('');
+  } catch {
+    container.innerHTML = row('Status', 'Unavailable', 'dot-bad');
+  }
+})();
+</script>
+{% endblock %}

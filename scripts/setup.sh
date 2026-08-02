@@ -45,12 +45,34 @@ else
   warn "No /dev/dri/renderD128; playback of H.265 footage will use the CPU"
 fi
 
+# Port 80 is privileged by default. Detect rather than assume, because the
+# failure mode otherwise is a service that restarts forever with a traceback.
+PORT="$(sed -n 's/^[[:space:]]*port:[[:space:]]*\([0-9]\+\).*/\1/p' config/config.yaml | head -1)"
+PORT="${PORT:-80}"
+LIMIT="$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null || echo 1024)"
+if [ "$PORT" -lt "$LIMIT" ]; then
+  warn "config wants port ${PORT}, but ports under ${LIMIT} need privileges."
+  cat <<EOF
+
+  Allow it for unprivileged users (persists across reboots):
+
+      sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
+      echo 'net.ipv4.ip_unprivileged_port_start=80' | \\
+        sudo tee /etc/sysctl.d/50-unprivileged-ports.conf
+
+  Or edit config/config.yaml and set server.port to 8080.
+
+EOF
+fi
+
 say "Installing systemd user service"
 mkdir -p "${HOME}/.config/systemd/user"
 cp systemd/sentry-nvr.service "${HOME}/.config/systemd/user/"
 systemctl --user daemon-reload
 
-cat <<'EOF'
+# Unquoted so the hostname resolves, but \$USER stays literal — it is meant to
+# be copy-pasted into a shell, where it will expand there.
+cat <<EOF
 
 Setup complete. To start it:
 
@@ -58,8 +80,8 @@ Setup complete. To start it:
 
 So it keeps running when you are not logged in (needs sudo, once):
 
-    sudo loginctl enable-linger "$USER"
+    sudo loginctl enable-linger "\$USER"
 
-Then open http://home.local:8080 and create your admin account.
+Then open http://$(hostname).local and create your admin account.
 
 EOF

@@ -179,8 +179,8 @@ def logout(request: Request):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
+def camera_view_models() -> list[dict[str, Any]]:
+    """Camera rows decorated with live status, for the dashboard and grid."""
     cameras = [dict(row) for row in db.cameras()]
     status = go2rtc.stream_status()
     recorder_status = recording.status()
@@ -190,7 +190,28 @@ def index(request: Request):
         camera["online"] = any(p.get("state") not in (None, "closed") for p in producers)
         camera["recorder"] = recorder_status.get(camera["id"], {})
         camera["stats"] = db.camera_stats(camera["id"])
-    return render(request, "index.html", cameras=cameras, storage=retention.estimate())
+    return cameras
+
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request):
+    cameras = camera_view_models()
+    return render(
+        request, "dashboard.html",
+        cameras=cameras,
+        online=sum(1 for c in cameras if c["online"]),
+        recording_count=sum(1 for c in cameras if c["record"]),
+        storage=retention.estimate(),
+    )
+
+
+@app.get("/cameras", response_class=HTMLResponse)
+def cameras_page(request: Request):
+    return render(
+        request, "cameras.html",
+        cameras=camera_view_models(),
+        storage=retention.estimate(),
+    )
 
 
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)

@@ -8,6 +8,9 @@ Runs entirely on your LAN. No cloud, no account, no subscription.
 
 ## What it does
 
+- **Dashboard** — the landing page: camera status, storage, retention, and
+  system health at a glance. Built as a card grid so new panels can be dropped
+  in without touching layout.
 - **Discovery** — sweeps the local subnet for ONVIF and RTSP devices, and
   fingerprints vendors (Reolink's native API, ONVIF, MAC OUI) so a camera shows
   up as "Reolink FE-P" rather than "something on port 554".
@@ -35,11 +38,33 @@ Runs entirely on your LAN. No cloud, no account, no subscription.
 git clone git@github.com:palamedes/home-camera-system.git ~/Cameras
 cd ~/Cameras
 ./scripts/setup.sh
+
+# Port 80 is privileged. Allow it for unprivileged users, once:
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
+echo 'net.ipv4.ip_unprivileged_port_start=80' | \
+  sudo tee /etc/sysctl.d/50-unprivileged-ports.conf
+
 systemctl --user enable --now sentry-nvr
 sudo loginctl enable-linger "$USER"    # keeps it running when logged out
 ```
 
-Open `http://<your-host>:8080` and create the admin account on first visit.
+Open `http://<your-host>` and create the admin account on first visit.
+
+### About that port
+
+Serving on 80 means no port to remember, but a process cannot bind it as an
+ordinary user. The sysctl above lets *any* user process bind ports 80 and up,
+which is fine on a single-user box.
+
+If you would rather scope the privilege to just this service, install it as a
+system unit instead of a user one — add `User=<you>`, `Group=<you>`, and
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` to
+`systemd/sentry-nvr.service`, drop it in `/etc/systemd/system/`, and replace
+`%h` with your home directory. That also starts it at boot without needing
+`enable-linger`.
+
+Either way, setting `server.port: 8080` in `config/config.yaml` avoids the
+question entirely.
 
 ## Configuration
 

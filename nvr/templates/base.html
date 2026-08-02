@@ -16,7 +16,8 @@
   </a>
   {% set path = request.url.path %}
   <nav>
-    <a href="/" class="{{ 'active' if path == '/' or path.startswith('/cameras') }}">Cameras</a>
+    <a href="/" class="{{ 'active' if path == '/' }}">Dashboard</a>
+    <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') }}">Cameras</a>
     <a href="/discover" class="{{ 'active' if path.startswith('/discover') }}">Discover</a>
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
   </nav>

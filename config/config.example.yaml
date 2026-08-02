@@ -5,14 +5,23 @@
 # database, since credentials change and the UI needs to write them.
 
 server:
-  # IPv4 wildcard, reachable at http://<host>.local:8080 from the LAN.
+  # IPv4 wildcard, reachable at http://<host>.local from the LAN.
   #
   # Not "::" — asyncio sets IPV6_V6ONLY on every IPv6 socket it opens, so
   # binding the IPv6 wildcard under uvicorn silently drops IPv4 entirely
   # rather than serving both. avahi publishes an A record alongside the AAAA,
   # and browsers fall back to it, so IPv4-only is the reachable choice.
   host: 0.0.0.0
-  port: 8080
+  # Port 80 means the dashboard is just http://home.local with no port to
+  # remember. Binding it as a non-root user needs one system change, once:
+  #
+  #     sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
+  #     echo 'net.ipv4.ip_unprivileged_port_start=80' | \
+  #       sudo tee /etc/sysctl.d/50-unprivileged-ports.conf
+  #
+  # See README for the alternative (a system unit with CAP_NET_BIND_SERVICE),
+  # which scopes the privilege to this service instead of all user processes.
+  port: 80
   # Session lifetime for a logged-in browser.
   session_days: 30
   # Set true only when this is served over HTTPS (e.g. behind Tailscale Serve).
