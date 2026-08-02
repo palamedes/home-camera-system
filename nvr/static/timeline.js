@@ -18,22 +18,6 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   const ctx = canvas.getContext('2d');
   const video = document.getElementById('video');
   const status = document.getElementById('status');
-  const player = document.getElementById('player');
-
-  // Each scrub/seek swaps the <video> source, which briefly drops its
-  // intrinsic size to 0 and would collapse the player (and the dewarp canvas
-  // over it). Lock the player's height to the first loaded frame and keep the
-  // video filling it, so the box never resizes while scrubbing.
-  let sizeLocked = false;
-  function lockPlayerSize() {
-    if (sizeLocked || !player) return;
-    const h = player.offsetHeight;
-    if (h > 120) {
-      player.style.height = h + 'px';
-      player.classList.add('locked');
-      sizeLocked = true;
-    }
-  }
   const playheadLabel = document.getElementById('playhead-label');
   const spanSelect = document.getElementById('span');
   const downloadBtn = document.getElementById('download-btn');
@@ -203,7 +187,7 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     draw();
   }
 
-  video.addEventListener('loadeddata', () => { status.classList.add('hidden'); lockPlayerSize(); });
+  video.addEventListener('loadeddata', () => status.classList.add('hidden'));
 
   video.addEventListener('error', () => {
     status.classList.remove('hidden');

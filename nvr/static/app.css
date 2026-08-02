@@ -478,10 +478,11 @@ a.title:hover { color: var(--accent); }
   border: 1px solid var(--line);
 }
 .player video, .player img { width: 100%; display: block; max-height: 76vh; object-fit: contain; background: #000; }
-/* Once locked (history scrubbing), the video fills the frozen player box so a
-   source swap can't resize it. */
-.player.locked { max-height: none; }
-.player.locked video { height: 100%; max-height: none; }
+/* The history player has a FIXED height so scrubbing (which reloads the <video>
+   source and momentarily drops its intrinsic size to 0) can't collapse the box
+   or the dewarp canvas layered over it. The video/canvas just fit inside. */
+.history-player { height: 62vh; }
+.history-player video { height: 100%; max-height: none; object-fit: contain; }
 /* Dewarp canvas covers the still-decoding video; never display:none the video
    or some browsers throttle its decoder. */
 #dewarp {
