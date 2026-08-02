@@ -163,7 +163,7 @@
 
     const id = opts.cameraId || 'cam';
     let mode = opts.mode || 'single';           // single | dual | quad | pano
-    const interactive = opts.interactive !== false;
+    let interactive = opts.interactive !== false;  // runtime-toggleable
     const persist = opts.persistCalib !== false;
     let activeView = 0;                          // which view single-mode shows
     let calib = opts.calib ? { ...DEFAULT_CALIB, ...opts.calib } : loadCalib(id);
@@ -330,44 +330,48 @@
       return activeView;
     }
 
-    if (interactive) {
-      let drag = null;
-      canvas.addEventListener('pointerdown', e => {
-        drag = { x: e.clientX, y: e.clientY, view: views[indexAt(e.clientX, e.clientY)] };
-        canvas.setPointerCapture(e.pointerId);
-      });
-      canvas.addEventListener('pointermove', e => {
-        if (!drag) return;
-        const v = drag.view;
-        const k = v.fov / canvas.clientHeight;   // radians per pixel — zoom-aware
-        // Drag right pans right; drag down tilts the view downward.
-        v.yaw += (e.clientX - drag.x) * k;
-        v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -0.35, Math.PI / 2 - 0.05);
-        drag.x = e.clientX; drag.y = e.clientY;
-      });
-      const endDrag = () => { drag = null; };
-      canvas.addEventListener('pointerup', endDrag);
-      canvas.addEventListener('pointercancel', endDrag);
-      canvas.addEventListener('wheel', e => {
-        e.preventDefault();
-        views[indexAt(e.clientX, e.clientY)].fov =
-          clamp(views[indexAt(e.clientX, e.clientY)].fov * (e.deltaY > 0 ? 1.06 : 0.94),
-            12 * D2R, 150 * D2R);
-      }, { passive: false });
-      // Double-click a tile in a multi-view mode to focus it full-frame.
-      canvas.addEventListener('dblclick', e => {
-        if (mode === 'quad' || mode === 'dual') {
-          activeView = indexAt(e.clientX, e.clientY);
-          mode = 'single';
-          resize();
-          if (opts.onModeChange) opts.onModeChange('single');
-        }
-      });
-    }
+    // Handlers are always registered but no-op unless `interactive` is on, so
+    // edit mode can be toggled at runtime without rebuilding the renderer.
+    let drag = null;
+    canvas.addEventListener('pointerdown', e => {
+      if (!interactive) return;
+      drag = { x: e.clientX, y: e.clientY, view: views[indexAt(e.clientX, e.clientY)] };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!interactive || !drag) return;
+      const v = drag.view;
+      const k = v.fov / canvas.clientHeight;   // radians per pixel — zoom-aware
+      // Drag right pans right; drag down tilts the view downward.
+      v.yaw += (e.clientX - drag.x) * k;
+      v.pitch = clamp(v.pitch + (e.clientY - drag.y) * k, -0.35, Math.PI / 2 - 0.05);
+      drag.x = e.clientX; drag.y = e.clientY;
+    });
+    const endDrag = () => { drag = null; };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('wheel', e => {
+      if (!interactive) return;
+      e.preventDefault();
+      views[indexAt(e.clientX, e.clientY)].fov =
+        clamp(views[indexAt(e.clientX, e.clientY)].fov * (e.deltaY > 0 ? 1.06 : 0.94),
+          12 * D2R, 150 * D2R);
+    }, { passive: false });
+    // Double-click a tile in a multi-view mode to focus it full-frame.
+    canvas.addEventListener('dblclick', e => {
+      if (!interactive) return;
+      if (mode === 'quad' || mode === 'dual') {
+        activeView = indexAt(e.clientX, e.clientY);
+        mode = 'single';
+        resize();
+        if (opts.onModeChange) opts.onModeChange('single');
+      }
+    });
 
     return {
       setMode(m) { mode = m; resize(); },
       getMode() { return mode; },
+      setInteractive(v) { interactive = !!v; },
       activeIndex() { return activeView; },
       activeView() { return { ...views[activeView] }; },
       setView(v) { views[activeView] = { ...views[activeView], ...v }; },

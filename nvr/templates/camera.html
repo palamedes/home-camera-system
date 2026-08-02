@@ -28,7 +28,8 @@
 
 <div class="toolbar">
   {% if camera.fisheye %}
-  <div class="segmented" id="view-modes" role="group" aria-label="View">
+  {% if is_admin %}<button class="btn" id="edit-btn">Edit view</button>{% endif %}
+  <div class="segmented" id="view-modes" role="group" aria-label="View" hidden>
     <button data-view="raw" class="active">Raw</button>
     <button data-view="single">Dewarp</button>
     <button data-view="dual">Dual</button>
@@ -167,43 +168,50 @@ const canvas = document.getElementById('dewarp');
 const modeButtons = document.getElementById('view-modes');
 const calibBtn = document.getElementById('calib-btn');
 const calibPanel = document.getElementById('calib-panel');
-const saveBtn = document.getElementById('save-vcam-btn');   // may be null (viewers)
+const saveBtn = document.getElementById('save-vcam-btn');   // admin only
 const delBtn = document.getElementById('del-vcam-btn');
+const editBtn = document.getElementById('edit-btn');
 const D2R = Math.PI / 180;
 
 const fisheye = initFisheye(liveOptions.video, canvas, {
   cameraId: {{ camera.id | tojson }},
   mode: 'single',
-  onModeChange: m => updateModeUI(m),
+  interactive: false,   // locked until Edit mode; no accidental panning
+  onModeChange: m => { currentMode = m; canvas.hidden = false; syncUI(); },
 });
 
-// The virtual camera currently being edited (opened via ?vcam=), if any.
+// Page state. currentMode is the page-level view ('raw' = plain video). editMode
+// gates every control and all mouse interaction. editing is the saved virtual
+// camera being viewed/edited, if any.
+let currentMode = 'raw';
+let editMode = false;
 let editing = null;
 
-function refreshSaveButton(m) {
-  if (!saveBtn) return;
-  const focused = m === 'single';
-  saveBtn.hidden = !focused;
-  if (delBtn) delBtn.hidden = !(focused && editing);
-  saveBtn.textContent = editing ? `Update ${editing.name}` : 'Save as camera';
+function syncUI() {
+  [...modeButtons.children].forEach(b =>
+    b.classList.toggle('active', b.dataset.view === currentMode));
+  modeButtons.hidden = !editMode;
+  const dewarping = currentMode !== 'raw';
+  if (calibBtn) calibBtn.hidden = !(editMode && dewarping);
+  if (!(editMode && dewarping)) calibPanel.hidden = true;
+  if (saveBtn) {
+    saveBtn.hidden = !(editMode && currentMode === 'single');
+    saveBtn.textContent = editing ? `Update ${editing.name}` : 'Save as camera';
+  }
+  if (delBtn) delBtn.hidden = !(editMode && currentMode === 'single' && editing);
+  if (editBtn) editBtn.textContent = editMode ? 'Done' : 'Edit view';
+  canvas.classList.toggle('editing', editMode);
 }
 
-function updateModeUI(m) {
-  [...modeButtons.children].forEach(b =>
-    b.classList.toggle('active', b.dataset.view === m));
-  const dewarping = m !== 'raw';
-  canvas.hidden = !dewarping;
-  calibBtn.hidden = !dewarping;
-  if (!dewarping) calibPanel.hidden = true;
-  refreshSaveButton(m);
-  const url = new URL(location.href);
-  if (m === 'raw') url.searchParams.delete('view');
-  else url.searchParams.set('view', m);
-  history.replaceState(null, '', url);
+function setEdit(on) {
+  editMode = on;
+  if (fisheye) fisheye.setInteractive(on);
+  syncUI();
 }
 
 if (!fisheye) {
   modeButtons.hidden = true;   // WebGL unavailable — keep the raw video
+  if (editBtn) editBtn.hidden = true;
 } else {
   const params = new URLSearchParams(location.search);
 
@@ -220,9 +228,17 @@ if (!fisheye) {
   }
 
   function applyMode(m) {
+    currentMode = m;
+    canvas.hidden = (m === 'raw');
     if (m !== 'raw') fisheye.setMode(m);
-    updateModeUI(m);
+    syncUI();
+    const url = new URL(location.href);
+    if (m === 'raw') url.searchParams.delete('view');
+    else url.searchParams.set('view', m);
+    history.replaceState(null, '', url);
   }
+
+  if (editBtn) editBtn.addEventListener('click', () => setEdit(!editMode));
 
   modeButtons.addEventListener('click', e => {
     const b = e.target.closest('[data-view]');
@@ -272,7 +288,7 @@ if (!fisheye) {
         const data = await r.json().catch(() => ({}));
         if (r.ok) {
           editing = { id: data.id, name: name.trim() };  // further saves update it
-          refreshSaveButton(fisheye.getMode());
+          syncUI();
           if (confirm(`Saved "${name.trim()}". View it on the dashboard now?`)) location.href = '/';
         }
       }
@@ -307,6 +323,7 @@ if (!fisheye) {
     seedSliders(fisheye.getCalib());
     const current = params.get('view') || 'raw';
     if (current !== 'raw') applyMode(current);
+    else syncUI();
   }
   boot();
 }
