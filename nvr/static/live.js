@@ -113,9 +113,21 @@ function useMjpeg({ stream, video, fallback, status, modeLabel }) {
 
 async function startLive(options, attempt = 0) {
   const { status, modeLabel } = options;
+
+  // Supersede any prior session (e.g. an audio toggle re-invokes startLive).
+  // Building a fresh RTCPeerConnection is cleaner than renegotiating in place.
+  if (attempt === 0) {
+    if (options._pc) { try { options._pc.close(); } catch (_) {} options._pc = null; }
+    options._epoch = (options._epoch || 0) + 1;
+  }
+  const epoch = options._epoch;
+  const stale = () => options._epoch !== epoch;  // a newer startLive won
+
   try {
     const pc = await tryWebRTC(options);
-    if (modeLabel) modeLabel.textContent = 'WebRTC';
+    if (stale()) { try { pc.close(); } catch (_) {} return; }
+    options._pc = pc;
+    if (modeLabel) modeLabel.textContent = options.audio ? 'WebRTC + audio' : 'WebRTC';
     status.classList.add('hidden');
 
     // Keep a working stream alive through transient blips. WebRTC routinely
@@ -126,7 +138,7 @@ async function startLive(options, attempt = 0) {
     let graceTimer = null;
     let rebuilt = false;
     const rebuild = () => {
-      if (rebuilt) return;   // one rebuild per connection, no thrashing
+      if (rebuilt || stale()) return;   // one rebuild per connection, no thrashing
       rebuilt = true;
       clearTimeout(graceTimer);
       try { pc.close(); } catch (_) {}
@@ -151,6 +163,7 @@ async function startLive(options, attempt = 0) {
       }
     });
   } catch (error) {
+    if (stale()) return;
     // go2rtc connects to the camera on demand, so the very first offer after a
     // page load can arrive before the producer is warm and fail once. Retry a
     // couple of times before falling back — this is what a manual reload was
@@ -162,9 +175,26 @@ async function startLive(options, attempt = 0) {
       setTimeout(() => startLive(options, attempt + 1), 1500);
       return;
     }
+    // An audio-enabled attempt that can't connect must never cost the user
+    // their video — drop back to video-only rather than to MJPEG.
+    if (options.audio) {
+      console.warn('audio session failed; falling back to video-only');
+      startLive({ ...options, audio: false });
+      return;
+    }
     console.warn('WebRTC unavailable, falling back to MJPEG:', error.message);
     useMjpeg(options);
   }
+}
+
+/*
+ * Enable or disable audio on an existing live session by rebuilding it.
+ * Muting also re-mutes the <video> so browser autoplay stays satisfied.
+ */
+function setLiveAudio(options, on) {
+  options.audio = on;
+  if (options.video) options.video.muted = !on;
+  startLive(options);
 }
 
 /*

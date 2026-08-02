@@ -26,6 +26,7 @@
 </div>
 
 <div class="toolbar">
+  <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
   {% if camera.sub_url %}
   <button class="btn" id="quality-btn"></button>
@@ -90,16 +91,24 @@ const wantHd = new URLSearchParams(location.search).has('hd');
 const useMain = wantHd || !subStream;
 const liveStream = useMain ? mainStream : subStream;
 
-startLive({
+// Start muted/video-only (zero transcode cost); the Audio button rebuilds the
+// session with an Opus track on demand.
+const liveOptions = {
   stream: liveStream,
   video: document.getElementById('video'),
   fallback: document.getElementById('fallback'),
   status: document.getElementById('status'),
   modeLabel: document.getElementById('mode-label'),
-  // Video-only. The cameras emit AAC, which WebRTC cannot carry natively;
-  // negotiating it caused the connection to drop right after the first frame.
-  // Audio needs a go2rtc Opus-transcode path (tracked separately).
   audio: false,
+};
+startLive(liveOptions);
+
+const audioBtn = document.getElementById('audio-btn');
+audioBtn.addEventListener('click', () => {
+  const on = !liveOptions.audio;
+  audioBtn.setAttribute('aria-pressed', String(on));
+  audioBtn.textContent = on ? '🔊 Audio on' : '🔇 Audio off';
+  setLiveAudio(liveOptions, on);
 });
 
 // Quality toggle: flip ?hd and reload, which tears the old session down cleanly.

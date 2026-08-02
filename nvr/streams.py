@@ -81,12 +81,13 @@ class Go2rtcManager:
         streams: dict[str, Any] = {}
         for camera in self.db.cameras(enabled_only=True):
             if camera["main_url"]:
-                # ffmpeg fallback covers cameras whose RTSP go2rtc can't
-                # negotiate natively; it costs a subprocess but avoids a
-                # camera silently never appearing.
-                streams[main_stream_name(camera["id"])] = [camera["main_url"]]
+                streams[main_stream_name(camera["id"])] = self._sources(
+                    main_stream_name(camera["id"]), camera["main_url"]
+                )
             if camera["sub_url"]:
-                streams[sub_stream_name(camera["id"])] = [camera["sub_url"]]
+                streams[sub_stream_name(camera["id"])] = self._sources(
+                    sub_stream_name(camera["id"]), camera["sub_url"]
+                )
 
         webrtc: dict[str, Any] = {"listen": f":{self.config.go2rtc.webrtc_port}"}
         ip = _lan_ip()
@@ -101,6 +102,18 @@ class Go2rtcManager:
             "streams": streams,
             "log": {"level": "warn"},
         }
+
+    def _sources(self, name: str, url: str) -> list[str]:
+        """Stream sources: the raw RTSP, plus an on-demand Opus audio track.
+
+        Cameras emit AAC, which WebRTC cannot carry. The `ffmpeg:...#audio=opus`
+        source transcodes AAC->Opus, but go2rtc only spawns it when a consumer
+        actually requests the audio track — muted viewers and grid tiles pay
+        nothing, and the transcoder dies within ~1s of the last listener
+        leaving. It pulls audio from go2rtc's own loopback, not a second camera
+        connection.
+        """
+        return [url, f"ffmpeg:{name}#audio=opus"]
 
     def write_config(self) -> bool:
         """Write go2rtc.yaml. Returns True if the contents changed."""
