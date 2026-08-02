@@ -55,9 +55,14 @@
     uniform float u_fov;      // virtual horizontal FoV (radians)
     uniform float u_aspect;   // viewport width/height
     uniform mat3  u_rot;      // yaw/pitch rotation
+    uniform float u_rotate;   // roll of the rendered picture around its view axis
     void main() {
       float t = tan(u_fov * 0.5);
       vec3 dir = normalize(vec3(v_ndc.x * t * u_aspect, v_ndc.y * t, 1.0));
+      // Rotate the output image: spin the ray around the viewing (z) axis
+      // before pan/tilt. Purely cosmetic — straightens a tilted picture.
+      float cr = cos(u_rotate), sr = sin(u_rotate);
+      dir = vec3(dir.x * cr - dir.y * sr, dir.x * sr + dir.y * cr, dir.z);
       dir = u_rot * dir;
       float theta = acos(clamp(dir.z, -1.0, 1.0));
       float phi = atan(dir.y, dir.x);
@@ -86,7 +91,8 @@
     fovMax: 100 * D2R,      // 200-degree lens
     proj: 1,               // equisolid (Reolink)
     chirality: 1,          // ceiling mount
-    roll: 0,
+    roll: 0,               // azimuth of the fisheye sampling (scene geometry)
+    rotate: 0,             // roll of the rendered picture (cosmetic)
   };
 
   function compile(gl, type, src) {
@@ -213,7 +219,7 @@
 
     // Uniform locations per program (fetched once).
     const rectLoc = locs(progRect, ['tex', 'center', 'radius', 'texAspect',
-      'fovMax', 'proj', 'chirality', 'roll', 'fov', 'aspect', 'rot']);
+      'fovMax', 'proj', 'chirality', 'roll', 'fov', 'aspect', 'rot', 'rotate']);
     const panoLoc = locs(progPano, ['tex', 'center', 'radius', 'texAspect',
       'fovMax', 'proj', 'chirality', 'roll', 'phi0', 'phiRange', 'theta0', 'thetaRange']);
 
@@ -250,6 +256,7 @@
 
       bindQuad(progRect);
       setLensUniforms(gl, rectLoc);
+      gl.uniform1f(rectLoc.rotate, calib.rotate || 0);
       for (const vp of viewports()) {
         const v = views[vp.view];
         gl.viewport(vp.x, vp.y, vp.w, vp.h);

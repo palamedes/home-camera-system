@@ -52,6 +52,7 @@
     <label>Radius <input type="range" min="0.3" max="0.55" step="0.005" data-cal="radius"></label>
     <label>Lens FoV <input type="range" min="140" max="220" step="1" data-cal="fovDeg"></label>
     <label>Level (roll) <input type="range" min="-180" max="180" step="1" data-cal="rollDeg"></label>
+    <label>Rotate picture <input type="range" min="-180" max="180" step="1" data-cal="rotateDeg"></label>
   </div>
   <div class="calib-row">
     <label class="checkbox"><input type="checkbox" data-cal="equisolid"> Equisolid lens</label>
@@ -236,6 +237,7 @@ if (!fisheye) {
   set('radius').value = cal.radius;
   set('fovDeg').value = Math.round(cal.fovMax / D2R * 2);
   set('rollDeg').value = Math.round(cal.roll / D2R);
+  set('rotateDeg').value = Math.round((cal.rotate || 0) / D2R);
   set('equisolid').checked = cal.proj === 1;
   set('desk').checked = cal.chirality < 0;
 
@@ -246,6 +248,7 @@ if (!fisheye) {
       radius: parseFloat(set('radius').value),
       fovMax: parseFloat(set('fovDeg').value) * D2R / 2,
       roll: parseFloat(set('rollDeg').value) * D2R,
+      rotate: parseFloat(set('rotateDeg').value) * D2R,
       proj: set('equisolid').checked ? 1 : 0,
       chirality: set('desk').checked ? -1 : 1,
     });
@@ -256,6 +259,7 @@ if (!fisheye) {
     set('cx').value = c.cx; set('cy').value = c.cy; set('radius').value = c.radius;
     set('fovDeg').value = Math.round(c.fovMax / D2R * 2);
     set('rollDeg').value = Math.round(c.roll / D2R);
+    set('rotateDeg').value = Math.round((c.rotate || 0) / D2R);
     set('equisolid').checked = c.proj === 1;
     set('desk').checked = c.chirality < 0;
   });
