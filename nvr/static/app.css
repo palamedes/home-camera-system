@@ -421,12 +421,20 @@ input:focus, select:focus {
 .settings-cols > .panel { flex: 1; min-width: 300px; }
 a.title { color: var(--text); }
 a.title:hover { color: var(--accent); }
+/* Full-height delete strip pinned to the right edge of a settings row.
+   Negative margins cancel the list-item's 14x16 padding so it reaches the edges. */
 .remove-x {
-  background: transparent; border: none; color: var(--bad);
-  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 8px;
-  border-radius: 6px; flex: none;
+  align-self: stretch;
+  margin: -14px -16px -14px 8px;
+  padding: 0 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-left: 1px solid var(--line);
+  color: var(--bad); font-size: 18px; line-height: 1; cursor: pointer;
+  flex: none;
 }
-.remove-x:hover { background: rgb(239 68 68 / .12); }
+.remove-x:hover { background: rgb(239 68 68 / .14); }
+/* Round the strip to match the panel on the last row. */
+.list-item:last-child .remove-x { border-bottom-right-radius: var(--radius); }
 .list-cameras .checkbox { padding-bottom: 2px; }
 .list-item .title { font-weight: 550; font-size: 14.5px; }
 .title-row { display: flex; align-items: center; gap: 6px; }
