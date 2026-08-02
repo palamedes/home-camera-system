@@ -5,13 +5,17 @@
 # database, since credentials change and the UI needs to write them.
 
 server:
-  # IPv4 wildcard, reachable at http://<host>.local from the LAN.
+  # "::" listens on IPv4 and IPv6 together, reachable at http://<host>.local.
   #
-  # Not "::" — asyncio sets IPV6_V6ONLY on every IPv6 socket it opens, so
-  # binding the IPv6 wildcard under uvicorn silently drops IPv4 entirely
-  # rather than serving both. avahi publishes an A record alongside the AAAA,
-  # and browsers fall back to it, so IPv4-only is the reachable choice.
-  host: 0.0.0.0
+  # Keep it dual-stack. avahi publishes both an A and an AAAA record for
+  # <host>.local, and which one a client picks is up to its resolver — so a
+  # single-family listener works from some machines on the LAN and not others,
+  # with the failing ones seeing a name that resolves but never connects.
+  #
+  # We build this socket ourselves rather than handing "::" to uvicorn:
+  # asyncio sets IPV6_V6ONLY on every IPv6 socket it opens, which would make
+  # "::" mean IPv6-only. See nvr/__main__.py. Use 0.0.0.0 to force IPv4 only.
+  host: "::"
   # Port 80 means the dashboard is just http://home.local with no port to
   # remember. Binding it as a non-root user needs one system change, once:
   #

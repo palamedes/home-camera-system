@@ -36,40 +36,71 @@ def _unprivileged_port_start() -> int:
         return 1024
 
 
-def _check_bindable(host: str, port: int) -> None:
-    """Fail fast with a useful message if we cannot bind.
+DUAL_STACK_HOSTS = {"::", "*", "dual", ""}
 
-    Checked up front rather than caught later: uvicorn logs a one-line errno
-    and exits 0, so a systemd unit would restart-loop forever with nothing in
-    the journal explaining why. This also avoids starting go2rtc and the
-    recorder fleet only to tear them straight back down.
+
+def _make_socket(host: str, port: int) -> socket.socket:
+    """Bind a listening socket, dual-stack where asked for.
+
+    uvicorn cannot do this itself. asyncio sets IPV6_V6ONLY unconditionally on
+    every IPv6 socket it opens, so handing it "::" yields an IPv6-only server
+    and IPv4 clients get connection-refused.
+
+    That matters because avahi publishes both an A and an AAAA record for
+    <host>.local. Which one a client picks is up to its resolver, so a
+    single-family listener works for some machines on the LAN and not others —
+    and the ones it fails for see a name that resolves but never connects.
+    Creating the socket ourselves with IPV6_V6ONLY off serves both families
+    from one listener.
     """
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if host in DUAL_STACK_HOSTS:
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except OSError:
+            # Kernel refuses mapped addresses; fall back to IPv4, which every
+            # device on a home LAN can reach.
+            sock.close()
+            return _make_socket("0.0.0.0", port)
+        bind_host = "::"
+    else:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        bind_host = host
+
     try:
-        probe.bind((host, port))
+        sock.bind((bind_host, port))
     except PermissionError:
-        limit = _unprivileged_port_start()
-        raise SystemExit(PRIVILEGED_PORT_HELP.format(port=port, limit=limit))
+        sock.close()
+        raise SystemExit(
+            PRIVILEGED_PORT_HELP.format(port=port, limit=_unprivileged_port_start())
+        )
     except OSError as exc:
-        raise SystemExit(f"\nCannot bind {host}:{port} — {exc}\n")
-    finally:
-        probe.close()
+        sock.close()
+        raise SystemExit(f"\nCannot bind {bind_host}:{port} — {exc}\n")
+
+    sock.listen(2048)
+    sock.set_inheritable(True)
+    return sock
 
 
 def main() -> None:
     cfg = config_module.load()
-    _check_bindable(cfg.server.host, cfg.server.port)
-    uvicorn.run(
-        "nvr.main:app",
-        host=cfg.server.host,
-        port=cfg.server.port,
-        log_level="info",
-        access_log=False,
-        # Recording state lives in this process; a reload or a second worker
-        # would mean two ffmpeg fleets writing the same segment paths.
-        workers=1,
+    sock = _make_socket(cfg.server.host, cfg.server.port)
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            "nvr.main:app",
+            log_level="info",
+            access_log=False,
+            # Recording state lives in this process; a reload or a second
+            # worker would mean two ffmpeg fleets writing the same paths.
+            workers=1,
+        )
     )
+    server.run(sockets=[sock])
 
 
 if __name__ == "__main__":
