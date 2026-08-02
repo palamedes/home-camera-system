@@ -60,9 +60,14 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.add_middleware(auth.AuthMiddleware, db=db, config=cfg)
 
 
-def render(request: Request, template: str, **context: Any) -> HTMLResponse:
+def render(
+    request: Request, template: str, status_code: int = 200, **context: Any
+) -> HTMLResponse:
     return templates.TemplateResponse(
-        request, template, {"user": auth.current_user(request), **context}
+        request,
+        template,
+        {"user": auth.current_user(request), **context},
+        status_code=status_code,
     )
 
 
