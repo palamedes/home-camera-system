@@ -48,9 +48,9 @@
       <a href="/cameras" class="card-action">View all &rarr;</a>
     </div>
     <div class="card-body">
-      {% if grid %}
+      {% if grid or virtuals %}
       <div class="mini-grid">
-        {% for camera in grid[:4] %}
+        {% for camera in grid %}
         <a class="mini" href="/cameras/{{ camera.id }}">
           <div class="mini-media">
             {% if camera.online %}
@@ -68,29 +68,7 @@
           </div>
         </a>
         {% endfor %}
-      </div>
-      {% if grid|length > 4 %}
-      <p class="muted small" style="margin: 12px 0 0;">
-        and {{ grid|length - 4 }} more
-      </p>
-      {% endif %}
-      {% else %}
-      <div class="card-empty">
-        <p class="muted">{{ 'All cameras are hidden from the grid.' if total else 'No cameras yet.' }}</p>
-        {% if not total %}<a href="/discover" class="btn btn-sm">Scan the network</a>{% endif %}
-      </div>
-      {% endif %}
-    </div>
-  </section>
 
-  {% if virtuals %}
-  <section class="card card-wide">
-    <div class="card-head">
-      <h2>Virtual cameras</h2>
-      <span class="muted small">dewarped from a 360</span>
-    </div>
-    <div class="card-body">
-      <div class="mini-grid">
         {% for v in virtuals %}
         <div class="mini vcam" data-vcam data-stream="{{ v.stream }}"
              data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
@@ -112,9 +90,37 @@
         </div>
         {% endfor %}
       </div>
+      {% else %}
+      <div class="card-empty">
+        <p class="muted">{{ 'All cameras are hidden from the grid.' if total else 'No cameras yet.' }}</p>
+        {% if not total %}<a href="/discover" class="btn btn-sm">Scan the network</a>{% endif %}
+      </div>
+      {% endif %}
     </div>
   </section>
-  {% endif %}
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Storage</h2>
+    </div>
+    <div class="card-body">
+      <dl class="kv">
+        <div><dt>Disk free</dt><dd>{{ storage.disk_free | human_size }}</dd></div>
+        <div><dt>Disk total</dt><dd>{{ storage.disk_total | human_size }}</dd></div>
+        <div>
+          <dt>Write rate</dt>
+          <dd>
+            {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}/day
+            {% else %}measuring&hellip;{% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Last prune</dt>
+          <dd data-ts="{{ storage.last_run or '' }}">never</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
 
   <section class="card">
     <div class="card-head">
@@ -160,29 +166,6 @@
         </div>
         {% endfor %}
       </div>
-    </div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <h2>Storage</h2>
-    </div>
-    <div class="card-body">
-      <dl class="kv">
-        <div><dt>Disk free</dt><dd>{{ storage.disk_free | human_size }}</dd></div>
-        <div><dt>Disk total</dt><dd>{{ storage.disk_total | human_size }}</dd></div>
-        <div>
-          <dt>Write rate</dt>
-          <dd>
-            {% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}/day
-            {% else %}measuring&hellip;{% endif %}
-          </dd>
-        </div>
-        <div>
-          <dt>Last prune</dt>
-          <dd data-ts="{{ storage.last_run or '' }}">never</dd>
-        </div>
-      </dl>
     </div>
   </section>
 

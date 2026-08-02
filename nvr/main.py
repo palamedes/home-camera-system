@@ -395,7 +395,8 @@ def dashboard(request: Request):
     grid = [c for c in cameras if c["show_on_grid"]]
     return render(
         request, "dashboard.html",
-        grid=grid,
+        cameras=cameras,   # all viewable, for the System recording controls
+        grid=grid,         # only those shown as tiles
         virtuals=virtual_view_models(request),
         total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
