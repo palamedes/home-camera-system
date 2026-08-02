@@ -451,6 +451,34 @@ input:focus, select:focus {
   border: 1px solid var(--line);
 }
 .player video, .player img { width: 100%; display: block; max-height: 76vh; object-fit: contain; background: #000; }
+/* Dewarp canvas covers the still-decoding video; never display:none the video
+   or some browsers throttle its decoder. */
+#dewarp {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  background: #000;
+  touch-action: none;
+  cursor: grab;
+  z-index: 2;
+}
+#dewarp:active { cursor: grabbing; }
+
+/* Segmented view control */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.segmented button {
+  background: var(--panel-2); color: var(--muted);
+  border: none; border-right: 1px solid var(--line);
+  padding: 8px 13px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.segmented button:last-child { border-right: none; }
+.segmented button:hover { color: var(--text); }
+.segmented button.active { background: var(--accent); color: #fff; }
+
+.calib-panel { margin-top: 14px; }
+.calib-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
+.calib-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.calib-grid input[type=range] { width: 100%; }
+.calib-row { display: flex; align-items: center; gap: 18px; margin-top: 14px; flex-wrap: wrap; }
 
 .player-status {
   position: absolute;
