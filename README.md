@@ -203,6 +203,20 @@ This is built for a trusted LAN. Before exposing it to the internet:
 - TLS verification is disabled when talking to cameras, which ship self-signed
   certificates. That is acceptable on a LAN and not otherwise.
 
+## Tests
+
+Backend tests (auth, roles, database, clips, virtual cameras, retention) run
+against a throwaway SQLite database in a temp directory — they never touch your
+real `data/` or start go2rtc:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The browser-side pieces (WebGL dewarping, MediaRecorder replay/clip capture,
+the timeline canvas) are verified by hand rather than automated.
+
 ## Layout
 
 ```
@@ -224,9 +238,11 @@ nvr/
     fisheye.js   WebGL fisheye dewarping + virtual cameras
     replay.js    in-browser instant-replay buffer
     timeline.js  history timeline (scrub, zoom, select, export)
+tests/           pytest suite (backend: auth, roles, db, clips, retention)
 ```
 
 ## Licence
 
-MIT. Bundles [go2rtc](https://github.com/AlexxIT/go2rtc) (MIT) as a binary,
-fetched at setup time.
+MIT — see [LICENSE](LICENSE). Bundles
+[go2rtc](https://github.com/AlexxIT/go2rtc) (MIT) as a binary, fetched at setup
+time.

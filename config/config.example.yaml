@@ -36,6 +36,9 @@ server:
 storage:
   # Where recordings live. Relative paths resolve against the project root.
   recordings_dir: recordings
+  # Where saved clips live. These are kept permanently — retention never touches
+  # them — so point this somewhere with room if you save a lot.
+  clips_dir: clips
   # Ring buffer limits. Whichever is hit first triggers pruning of the oldest
   # footage. A percentage is taken against the total size of the filesystem
   # holding recordings_dir.

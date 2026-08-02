@@ -141,8 +141,18 @@ def _resolve(base: Path, value: str) -> Path:
 
 
 def load(path: Path | None = None) -> Config:
-    """Read config.yaml if present, else return defaults."""
-    path = path or ROOT / "config" / "config.yaml"
+    """Read config.yaml if present, else return defaults.
+
+    Two environment overrides let the whole app be pointed elsewhere without
+    editing the file — handy for a systemd unit with its state outside the repo,
+    and essential for tests, which must never touch the real database:
+
+      * SENTRY_CONFIG   — path to the config.yaml to read.
+      * SENTRY_DATA_DIR — where the database, secret key, and go2rtc config live.
+    """
+    if path is None:
+        env_path = os.environ.get("SENTRY_CONFIG")
+        path = Path(env_path).expanduser() if env_path else ROOT / "config" / "config.yaml"
     raw: dict[str, Any] = {}
     if path.exists():
         raw = yaml.safe_load(path.read_text()) or {}
@@ -186,6 +196,10 @@ def load(path: Path | None = None) -> Config:
         always_transcode=bool(p.get("always_transcode", False)),
         qsv_device=p.get("qsv_device", cfg.playback.qsv_device),
     )
+
+    data_env = os.environ.get("SENTRY_DATA_DIR")
+    if data_env:
+        cfg.data_dir = Path(data_env).expanduser()
 
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.storage.recordings_dir.mkdir(parents=True, exist_ok=True)
