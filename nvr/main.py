@@ -179,6 +179,48 @@ def logout(request: Request):
     return response
 
 
+@app.post("/account/password")
+async def change_password(request: Request):
+    user = auth.current_user(request)
+    if not user:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    payload = await request.json()
+    current = payload.get("current_password") or ""
+    new = payload.get("new_password") or ""
+    confirm = payload.get("confirm") or ""
+
+    if not auth.verify_password(current, user["password_hash"]):
+        # Same deliberate delay as the login path, so a wrong current password
+        # cannot be probed quickly by a hijacked session.
+        time.sleep(0.5)
+        return JSONResponse(
+            {"error": "Current password is incorrect."}, status_code=400
+        )
+    if len(new) < 8:
+        return JSONResponse(
+            {"error": "New password must be at least 8 characters."}, status_code=400
+        )
+    if new != confirm:
+        return JSONResponse({"error": "New passwords do not match."}, status_code=400)
+    if new == current:
+        return JSONResponse(
+            {"error": "New password must differ from the current one."}, status_code=400
+        )
+
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (auth.hash_password(new), user["id"]),
+    )
+    # Keep this browser signed in, but drop every other session — changing a
+    # password should log out anywhere the old one might still be active.
+    token = request.cookies.get(auth.COOKIE_NAME)
+    db.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+        (user["id"], token),
+    )
+    return JSONResponse({"ok": True})
+
+
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
@@ -355,13 +397,37 @@ async def api_add_camera(request: Request):
     )
 
 
+# Bounded recording windows, in seconds, offered by the dashboard control.
+RECORD_WINDOWS = {
+    "1h": 3600,
+    "24h": 86400,
+    "3d": 3 * 86400,
+    "5d": 5 * 86400,
+}
+
+
 @app.patch("/api/cameras/{camera_id}")
 async def api_update_camera(camera_id: str, request: Request):
     if not db.camera(camera_id):
         return JSONResponse({"error": "not found"}, status_code=404)
     payload = await request.json()
+
+    # A record_mode is sugar the UI sends instead of hand-setting record and
+    # record_until: "on"/"off" for continuous, or a window key for a bounded
+    # capture that auto-stops.
+    mode = payload.get("record_mode")
+    if mode == "on":
+        payload["record"], payload["record_until"] = 1, None
+    elif mode == "off":
+        payload["record"], payload["record_until"] = 0, None
+    elif mode in RECORD_WINDOWS:
+        payload["record"] = 1
+        payload["record_until"] = time.time() + RECORD_WINDOWS[mode]
+    elif mode is not None:
+        return JSONResponse({"error": f"unknown record_mode {mode!r}"}, status_code=400)
+
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
-               "username", "password"}
+               "username", "password", "record_until", "retention_seconds"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)

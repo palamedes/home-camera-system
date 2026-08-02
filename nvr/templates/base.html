@@ -21,17 +21,64 @@
     <a href="/discover" class="{{ 'active' if path.startswith('/discover') }}">Discover</a>
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
   </nav>
-  <form method="post" action="/logout" class="logout">
-    <span class="who">{{ user['username'] }}</span>
-    <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
-  </form>
+  <div class="account" id="account">
+    <button class="account-btn" id="account-btn" aria-haspopup="menu" aria-expanded="false">
+      <span class="avatar">{{ user['username'][:1] | upper }}</span>
+      <span class="who">{{ user['username'] }}</span>
+      <svg class="caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <div class="account-menu" id="account-menu" role="menu" hidden>
+      <div class="account-menu-head">
+        <div class="account-menu-name">{{ user['username'] }}</div>
+        <div class="account-menu-sub">Signed in</div>
+      </div>
+      <button class="menu-item" id="change-password-item" role="menuitem" type="button">
+        Change password
+      </button>
+      <div class="menu-divider"></div>
+      <form method="post" action="/logout" role="none">
+        <button type="submit" class="menu-item menu-item-danger" role="menuitem">
+          Sign out
+        </button>
+      </form>
+    </div>
+  </div>
 </header>
+
+<div class="modal-backdrop" id="password-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+    <div class="modal-head">
+      <h2 id="pw-title">Change password</h2>
+      <button class="modal-close" id="pw-close" aria-label="Close">&times;</button>
+    </div>
+    <form id="password-form" class="modal-body">
+      <div id="pw-alert"></div>
+      <div class="field">
+        <label for="pw-current">Current password</label>
+        <input type="password" id="pw-current" autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label for="pw-new">New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label for="pw-confirm">Confirm new password</label>
+        <input type="password" id="pw-confirm" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="pw-submit">Update password</button>
+    </form>
+  </div>
+</div>
 {% endif %}
 
 <main class="{% block main_class %}wrap{% endblock %}">
   {% block content %}{% endblock %}
 </main>
 
+{% if user %}<script src="/static/account.js"></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

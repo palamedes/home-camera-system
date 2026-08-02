@@ -221,10 +221,23 @@ class RecordingService:
 
     def sync(self) -> None:
         """Reconcile running recorders against the camera table."""
+        now = time.time()
+
+        # Expire bounded recording windows. Once record_until passes we clear
+        # the flag in the database rather than merely skipping it, so a timed
+        # recording does not silently resume after a restart.
+        for camera in self.db.cameras(enabled_only=True):
+            until = camera["record_until"]
+            if camera["record"] and until is not None and until <= now:
+                log.info("recording window elapsed for %s; stopping", camera["id"])
+                self.db.update_camera(camera["id"], record=0, record_until=None)
+
         wanted = {
             camera["id"]: camera
             for camera in self.db.cameras(enabled_only=True)
-            if camera["record"] and camera["main_url"]
+            if camera["record"]
+            and camera["main_url"]
+            and (camera["record_until"] is None or camera["record_until"] > now)
         }
 
         for camera_id in list(self.recorders):

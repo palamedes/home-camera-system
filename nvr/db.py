@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS cameras (
     sub_url       TEXT,
     record        INTEGER NOT NULL DEFAULT 1,
     record_stream TEXT    NOT NULL DEFAULT 'main',
+    -- When set, recording auto-stops at this epoch time (a bounded window like
+    -- "record for the next 3 days"). NULL means record continuously.
+    record_until  REAL,
+    -- Per-camera retention in seconds; NULL falls back to the global limit.
+    retention_seconds INTEGER,
     enabled       INTEGER NOT NULL DEFAULT 1,
     created_at    INTEGER NOT NULL,
     last_seen     INTEGER
@@ -76,7 +81,24 @@ class Database:
         self._write_lock = threading.Lock()
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+        self._migrate()
         self.path.chmod(0o600)  # camera passwords live in here
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        CREATE TABLE IF NOT EXISTS never alters an existing table, so new
+        columns have to be added explicitly. Each is guarded by a presence
+        check, making this safe to run on every startup.
+        """
+        have = {row["name"] for row in self.query("PRAGMA table_info(cameras)")}
+        additions = {
+            "record_until": "ALTER TABLE cameras ADD COLUMN record_until REAL",
+            "retention_seconds": "ALTER TABLE cameras ADD COLUMN retention_seconds INTEGER",
+        }
+        for column, statement in additions.items():
+            if column not in have:
+                self.execute(statement)
 
     def connect(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
