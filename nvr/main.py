@@ -700,7 +700,7 @@ async def api_update_camera(camera_id: str, request: Request):
 
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
                "username", "password", "record_until", "retention_seconds",
-               "fisheye", "viewer_visible", "show_on_grid"}
+               "rolling_keep_seconds", "fisheye", "viewer_visible", "show_on_grid"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)

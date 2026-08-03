@@ -72,57 +72,56 @@ class RetentionService:
         self.db.delete_segment(row["id"])
         return size
 
+    def _camera_windows(self) -> tuple[dict[str, tuple[int, int]], int]:
+        """Per-camera (hard_cap, rolling_min) in seconds, plus the global cap.
+
+        hard_cap: delete footage older than this no matter what. Falls back to
+        the global limit when unset (NULL); 0 means "never delete by age".
+        rolling_min: the recent window protected from space-based pruning.
+        """
+        global_hard = self.config.storage.max_age_days * 86400
+        windows: dict[str, tuple[int, int]] = {}
+        for c in self.db.cameras():
+            rs = c["retention_seconds"]
+            hard = global_hard if rs is None else int(rs)
+            rolling = int(c["rolling_keep_seconds"] or 0)
+            windows[c["id"]] = (hard, rolling)
+        return windows, global_hard
+
     def run_once(self) -> dict[str, Any]:
         deleted = 0
         freed = 0
-
-        # 1. Age limit — per camera, since each may set its own retention
-        #    (e.g. 8 hours on one, 7 days on another). A camera with no override
-        #    uses the global default. Applied per camera rather than globally so
-        #    a camera whose retention is *longer* than the default is not pruned
-        #    by it.
         now = time.time()
-        global_seconds = self.config.storage.max_age_days * 86400
+        windows, global_hard = self._camera_windows()
 
-        cameras = {c["id"]: c for c in self.db.cameras()}
-        for camera in cameras.values():
-            seconds = camera["retention_seconds"] or global_seconds
-            if seconds <= 0:
-                continue
-            cutoff = now - seconds
-            while True:
-                rows = self.db.segments_older_than_for_camera(
-                    camera["id"], cutoff, limit=BATCH
-                )
-                if not rows:
-                    break
-                for row in rows:
-                    freed += self._delete(row)
-                    deleted += 1
-                if len(rows) < BATCH:
-                    break
+        # 1. Hard age cap — per camera. Footage older than the cap is deleted
+        #    regardless of free space (this is the "delete no matter what" tier).
+        for cam_id, (hard, _rolling) in windows.items():
+            if hard > 0:
+                d, f = self._prune_older_than(cam_id, now - hard)
+                deleted += d
+                freed += f
 
-        # Segments left behind by a removed camera fall back to the global age
-        # limit so they cannot linger forever.
-        if global_seconds > 0:
+        # Segments left behind by a removed camera fall back to the global cap.
+        if global_hard > 0:
             present = {r["camera_id"] for r in self.db.query(
                 "SELECT DISTINCT camera_id FROM segments"
             )}
-            for orphan_id in present - set(cameras):
-                cutoff = now - global_seconds
-                while True:
-                    rows = self.db.segments_older_than_for_camera(
-                        orphan_id, cutoff, limit=BATCH
-                    )
-                    if not rows:
-                        break
-                    for row in rows:
-                        freed += self._delete(row)
-                        deleted += 1
-                    if len(rows) < BATCH:
-                        break
+            for orphan_id in present - set(windows):
+                d, f = self._prune_older_than(orphan_id, now - global_hard)
+                deleted += d
+                freed += f
 
-        # 2. Size quota.
+        # A segment is protected from the space tiers while it is newer than its
+        # camera's rolling-keep window. Recent footage (the rolling minimum) thus
+        # survives space pressure — only the free-space safety floor overrides it.
+        def protected(row: Any) -> bool:
+            rolling = windows.get(row["camera_id"], (0, 0))[1]
+            return rolling > 0 and (now - float(row["start_ts"])) < rolling
+
+        # 2. Size quota — delete the oldest UNPROTECTED footage first, and stop
+        #    rather than eat into a rolling window even if that leaves us over
+        #    quota (the free-space floor below is the real backstop).
         try:
             quota = self.config.storage.max_bytes()
         except (OSError, ValueError):
@@ -133,31 +132,51 @@ class RetentionService:
                 rows = self.db.oldest_segments(limit=BATCH)
                 if not rows:
                     break
+                progressed = False
                 for row in rows:
                     if total <= quota:
                         break
+                    if protected(row):
+                        continue
                     size = self._delete(row)
                     total -= size
                     freed += size
                     deleted += 1
-                else:
-                    continue
-                break
+                    progressed = True
+                if not progressed:
+                    break  # only protected footage left; respect it over quota
 
-        # 3. Free-space backstop.
+        # 3. Free-space backstop. First reclaim unprotected footage; only if the
+        #    disk is still dangerously full do we override rolling protection —
+        #    filling the root filesystem would take down the OS and database.
         usage = shutil.disk_usage(self.config.storage.recordings_dir)
-        while usage.free < FREE_SPACE_FLOOR:
-            rows = self.db.oldest_segments(limit=BATCH)
-            if not rows:
-                log.error(
-                    "disk below %s free but no recordings left to prune",
+        if usage.free < FREE_SPACE_FLOOR:
+            while usage.free < FREE_SPACE_FLOOR:
+                rows = self.db.oldest_segments(limit=BATCH)
+                unprotected = [r for r in rows if not protected(r)]
+                if not unprotected:
+                    break
+                for row in unprotected:
+                    freed += self._delete(row)
+                    deleted += 1
+                usage = shutil.disk_usage(self.config.storage.recordings_dir)
+
+            while usage.free < FREE_SPACE_FLOOR:
+                rows = self.db.oldest_segments(limit=BATCH)
+                if not rows:
+                    log.error(
+                        "disk below %s free but no recordings left to prune",
+                        FREE_SPACE_FLOOR,
+                    )
+                    break
+                log.warning(
+                    "disk below %s free; overriding rolling-keep protection",
                     FREE_SPACE_FLOOR,
                 )
-                break
-            for row in rows:
-                freed += self._delete(row)
-                deleted += 1
-            usage = shutil.disk_usage(self.config.storage.recordings_dir)
+                for row in rows:
+                    freed += self._delete(row)
+                    deleted += 1
+                usage = shutil.disk_usage(self.config.storage.recordings_dir)
 
         self.prune_empty_directories()
         self.last_run = time.time()
@@ -165,6 +184,21 @@ class RetentionService:
         if deleted:
             log.info("retention removed %d segments (%.1f GB)", deleted, freed / 1024**3)
         return {"deleted": deleted, "freed": freed}
+
+    def _prune_older_than(self, camera_id: str, cutoff: float) -> tuple[int, int]:
+        """Delete a camera's segments older than cutoff. Returns (deleted, freed)."""
+        deleted = 0
+        freed = 0
+        while True:
+            rows = self.db.segments_older_than_for_camera(camera_id, cutoff, limit=BATCH)
+            if not rows:
+                break
+            for row in rows:
+                freed += self._delete(row)
+                deleted += 1
+            if len(rows) < BATCH:
+                break
+        return deleted, freed
 
     def prune_empty_directories(self) -> None:
         """Remove day folders left behind after their segments were deleted."""

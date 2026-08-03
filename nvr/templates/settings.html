@@ -37,8 +37,9 @@
 </div>
 
 {% set retentions = [
-  ('28800', '8 hours'), ('86400', '1 day'), ('259200', '3 days'),
-  ('604800', '7 days'), ('1209600', '14 days'), ('2592000', '30 days')
+  ('28800', '8 hours'), ('86400', '1 day'), ('172800', '2 days'),
+  ('259200', '3 days'), ('604800', '7 days'), ('1209600', '14 days'),
+  ('2592000', '30 days')
 ] %}
 {% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
 {% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
@@ -118,16 +119,26 @@
               </select>
             </div>
             <div class="setting">
-              <label for="ret-{{ camera.id }}">Keep footage</label>
-              <select id="ret-{{ camera.id }}" data-retention data-default-days="{{ storage.max_age_days }}" class="rec-select">
-                <option value="" {{ 'selected' if not camera.retention_seconds }}>Default ({{ storage.max_age_days }}d)</option>
+              <label for="roll-{{ camera.id }}" title="Recent footage kept safe from space cleanup — only the disk safety floor can override it">Rolling keep (min)</label>
+              <select id="roll-{{ camera.id }}" data-rolling class="rec-select">
+                <option value="" {{ 'selected' if not camera.rolling_keep_seconds }}>None</option>
                 {% for value, text in retentions %}
-                <option value="{{ value }}" {{ 'selected' if camera.retention_seconds == value | int }}>{{ text }}</option>
+                <option value="{{ value }}" {{ 'selected' if camera.rolling_keep_seconds == value | int }}>{{ text }}</option>
                 {% endfor %}
               </select>
             </div>
+            <div class="setting">
+              <label for="ret-{{ camera.id }}" title="Footage older than this is deleted no matter how much free space there is">Delete after (max)</label>
+              <select id="ret-{{ camera.id }}" data-retention data-default-days="{{ storage.max_age_days }}" class="rec-select">
+                <option value="" {{ 'selected' if camera.retention_seconds is none }}>Default ({{ storage.max_age_days }}d)</option>
+                {% for value, text in retentions %}
+                <option value="{{ value }}" {{ 'selected' if camera.retention_seconds == value | int }}>{{ text }}</option>
+                {% endfor %}
+                <option value="0" {{ 'selected' if camera.retention_seconds == 0 }}>Never (until space)</option>
+              </select>
+            </div>
             <div class="setting est">
-              <label title="Rough disk use if this stream recorded continuously for the full retention window">Est. storage</label>
+              <label title="Rough disk use at the current stream's bitrate if footage is kept for the whole 'delete after' window">Est. storage</label>
               <span class="est-val" data-storage-est>&mdash;</span>
             </div>
           </div>
@@ -578,25 +589,29 @@ document.querySelectorAll('[data-vcam-del]').forEach(btn => {
   });
 });
 
-document.querySelectorAll('select[data-retention]').forEach(select => {
-  const original = select.value;
-  select.addEventListener('change', async () => {
-    const id = select.closest('[data-camera]').dataset.camera;
-    // Empty string clears the override (null) and reverts to the global limit.
-    const seconds = select.value === '' ? null : parseInt(select.value, 10);
-    select.disabled = true;
-    try {
-      const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ retention_seconds: seconds }),
-      });
-      if (!response.ok) throw new Error('patch failed');
-    } catch {
-      select.value = original;  // revert the picker if it did not take
-    } finally {
-      select.disabled = false;
-    }
+// Retention pickers: data-retention -> retention_seconds (hard max; ""=default,
+// "0"=never), data-rolling -> rolling_keep_seconds (protected minimum; ""=none).
+[['data-retention', 'retention_seconds'], ['data-rolling', 'rolling_keep_seconds']].forEach(([attr, field]) => {
+  document.querySelectorAll(`select[${attr}]`).forEach(select => {
+    let original = select.value;
+    select.addEventListener('change', async () => {
+      const id = select.closest('[data-camera]').dataset.camera;
+      const seconds = select.value === '' ? null : parseInt(select.value, 10);
+      select.disabled = true;
+      try {
+        const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: seconds }),
+        });
+        if (!response.ok) throw new Error('patch failed');
+        original = select.value;
+      } catch {
+        select.value = original;  // revert the picker if it did not take
+      } finally {
+        select.disabled = false;
+      }
+    });
   });
 });
 

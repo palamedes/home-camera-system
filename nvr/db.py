@@ -52,8 +52,14 @@ CREATE TABLE IF NOT EXISTS cameras (
     -- When set, recording auto-stops at this epoch time (a bounded window like
     -- "record for the next 3 days"). NULL means record continuously.
     record_until  REAL,
-    -- Per-camera retention in seconds; NULL falls back to the global limit.
+    -- Hard maximum age in seconds: footage older than this is deleted no matter
+    -- how much free space there is. NULL falls back to the global limit; 0 means
+    -- "never delete by age" (keep until space runs out).
     retention_seconds INTEGER,
+    -- Rolling minimum in seconds: the recent window that is protected from
+    -- space-based pruning (only the free-space safety floor may override it).
+    -- NULL/0 means nothing is protected.
+    rolling_keep_seconds INTEGER,
     -- 1 if this is a 360/fisheye camera (auto-detected, admin-overridable).
     fisheye       INTEGER NOT NULL DEFAULT 0,
     -- 1 if non-admin "viewer" accounts may see this camera at all.
@@ -161,6 +167,7 @@ class Database:
         additions = {
             "record_until": "ALTER TABLE cameras ADD COLUMN record_until REAL",
             "retention_seconds": "ALTER TABLE cameras ADD COLUMN retention_seconds INTEGER",
+            "rolling_keep_seconds": "ALTER TABLE cameras ADD COLUMN rolling_keep_seconds INTEGER",
             "fisheye": "ALTER TABLE cameras ADD COLUMN fisheye INTEGER NOT NULL DEFAULT 0",
             "viewer_visible": "ALTER TABLE cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1",
             "show_on_grid": "ALTER TABLE cameras ADD COLUMN show_on_grid INTEGER NOT NULL DEFAULT 1",
