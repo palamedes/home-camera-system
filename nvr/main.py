@@ -371,8 +371,11 @@ def _online(camera: Any, info: Any) -> bool:
     go2rtc pulls cameras on demand, so one that is neither being recorded nor
     watched has no bytes flowing — that is idle, not offline. Fall back to a
     cheap (cached) TCP reachability probe so "not recording" never reads as
-    "offline".
+    "offline". A camera the admin has disabled is deliberately offline and is
+    never probed.
     """
+    if "enabled" in camera.keys() and not camera["enabled"]:
+        return False
     return streams.stream_online(info) or go2rtc.camera_reachable(camera)
 
 
