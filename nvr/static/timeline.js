@@ -341,6 +341,30 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   // the dewarp canvas, so what you get is exactly the dewarped view — no
   // server-side reprojection to get wrong. Raw cameras capture the video. The
   // clip is then downloaded or saved to the box.
+  // Tap the history <video>'s audio into a MediaStream via Web Audio — the
+  // reliable cross-browser way to capture a media element's audio for a
+  // recording. Built once (createMediaElementSource throws if called twice on
+  // the same element) and also wired to the speakers so playback stays audible.
+  let audioCtx = null, audioDest = null;
+  function playbackAudioTrack() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try {
+      if (!audioDest) {
+        audioCtx = new AC();
+        const src = audioCtx.createMediaElementSource(video);
+        audioDest = audioCtx.createMediaStreamDestination();
+        src.connect(audioDest);          // tap for the recorder
+        src.connect(audioCtx.destination); // keep it audible
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const tracks = audioDest.stream.getAudioTracks();
+      return tracks.length ? tracks[0] : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function captureClip(download) {
     if (!selection) return;
     const el = document.getElementById('dewarp') || video;
@@ -373,14 +397,13 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     playFrom(start, { announce: false });
     await new Promise(r => setTimeout(r, 500));   // let playback settle
 
-    let stream = grab(el, 25);
-    // The dewarp canvas has no audio of its own — splice in the playback audio
-    // from the <video> so saved/exported virtual-camera clips aren't silent.
-    if (el !== video) {
-      const vstream = grab(video);
-      const audio = vstream ? vstream.getAudioTracks() : [];
-      if (audio.length) stream = new MediaStream([...stream.getVideoTracks(), ...audio]);
-    }
+    // Recording stream: rendered frames (the dewarp canvas for a virtual
+    // camera, else the video) + the playback audio tapped via Web Audio.
+    // HTMLMediaElement.captureStream() audio is unreliable across browsers, so
+    // don't depend on it — playbackAudioTrack() taps deterministically.
+    const vtracks = grab(el, 25).getVideoTracks();
+    const atrack = playbackAudioTrack();
+    const stream = new MediaStream(atrack ? [...vtracks, atrack] : vtracks);
 
     const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     const chunks = [];
