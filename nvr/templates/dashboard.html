@@ -105,9 +105,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/live.js"></script>
-<script src="/static/presence.js"></script>
-{% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
+<script src="{{ asset('live.js') }}"></script>
+<script src="{{ asset('presence.js') }}"></script>
+{% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 // "Last prune" timestamp in the storage strip.
 document.querySelectorAll('[data-ts]').forEach(el => {

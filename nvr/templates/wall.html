@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Wall — Sentry</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="{{ asset('app.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
   <style>
     /* The wall is deliberately its own page, not the app shell: no topbar, no
@@ -94,8 +94,8 @@
   {% if not cameras and not virtuals %}<div class="wall-empty">No cameras to show</div>{% endif %}
   <div class="wall-hint" id="hint">Press Esc to exit</div>
 
-  <script src="/static/live.js"></script>
-  {% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
+  <script src="{{ asset('live.js') }}"></script>
+  {% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
   <script>
     const wall = document.getElementById('wall');
 

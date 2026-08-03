@@ -116,9 +116,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/live.js"></script>
-<script src="/static/presence.js"></script>
-{% if virtuals %}<script src="/static/fisheye.js"></script>{% endif %}
+<script src="{{ asset('live.js') }}"></script>
+<script src="{{ asset('presence.js') }}"></script>
+{% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 // Live substream video per tile. The sub is low-res and passes through as
 // H.264 with no server transcode, so a wall of them stays cheap; each tile

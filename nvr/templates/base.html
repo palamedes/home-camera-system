@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Sentry{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="{{ asset('app.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
 </head>
 <body>
@@ -80,7 +80,7 @@
   {% block content %}{% endblock %}
 </main>
 
-{% if user %}<script src="/static/account.js"></script>{% endif %}
+{% if user %}<script src="{{ asset('account.js') }}"></script>{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

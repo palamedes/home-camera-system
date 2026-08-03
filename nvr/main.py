@@ -41,6 +41,23 @@ templates = Jinja2Templates(directory=str(HERE / "templates"))
 templates.env.filters["human_size"] = config_module.human_size
 
 
+def _asset_url(path: str) -> str:
+    """Cache-busting URL for a static file: /static/<path>?v=<mtime>.
+
+    Without this, browsers serve stale JS/CSS after an edit — which silently
+    masked more than one fix during development (a "still broken" that was
+    really the old file still cached).
+    """
+    try:
+        version = int((HERE / "static" / path).stat().st_mtime)
+    except OSError:
+        version = 0
+    return f"/static/{path}?v={version}"
+
+
+templates.env.globals["asset"] = _asset_url
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.purge_expired_sessions()

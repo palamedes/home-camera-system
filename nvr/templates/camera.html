@@ -119,9 +119,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/live.js"></script>
-<script src="/static/replay.js"></script>
-{% if camera.fisheye %}<script src="/static/fisheye.js"></script>{% endif %}
+<script src="{{ asset('live.js') }}"></script>
+<script src="{{ asset('replay.js') }}"></script>
+{% if camera.fisheye %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 document.querySelectorAll('#oldest, #newest').forEach(el => {
   const ts = parseFloat(el.dataset.ts);

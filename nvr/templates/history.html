@@ -88,8 +88,8 @@
 
 {% block scripts %}
 {% if bounds %}
-<script src="/static/timeline.js"></script>
-{% if vcam %}<script src="/static/fisheye.js"></script>{% endif %}
+<script src="{{ asset('timeline.js') }}"></script>
+{% if vcam %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 document.querySelectorAll('[data-ts]').forEach(el => {
   const ts = parseFloat(el.dataset.ts);
