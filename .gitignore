@@ -15,3 +15,6 @@ bin/go2rtc
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Agent worktrees
+.claude/
