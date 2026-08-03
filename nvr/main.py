@@ -538,9 +538,16 @@ def settings_page(request: Request):
     schedules: dict[str, list[dict[str, Any]]] = {}
     for row in db.schedules():
         schedules.setdefault(row["camera_id"], []).append(_schedule_dict(row))
+    status = go2rtc.stream_status()
+    cameras = []
+    for row in db.cameras():
+        cam = dict(row)
+        cam["online"] = _online(row, status.get(streams.main_stream_name(row["id"])))
+        cam["sched_count"] = len(schedules.get(row["id"], []))
+        cameras.append(cam)
     return render(
         request, "settings.html",
-        cameras=[dict(row) for row in db.cameras()],
+        cameras=cameras,
         schedules=schedules,
         virtuals=virtual_view_models(request),
         storage=retention.estimate(),

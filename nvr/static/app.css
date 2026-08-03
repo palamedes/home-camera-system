@@ -851,3 +851,49 @@ a.title:hover { color: var(--accent); }
   .who { display: none; }
   .wrap, .wrap-wide { padding: 18px 14px 44px; }
 }
+
+/* ---- Settings: expandable camera cards ---------------------------------- */
+.cam-cards { display: block; }
+.cam-card { border-bottom: 1px solid var(--line); }
+.cam-card:last-child { border-bottom: 0; }
+.cam-card[data-disabled] .cam-summary { opacity: 0.6; }
+
+.cam-summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; cursor: pointer; list-style: none;
+}
+.cam-summary::-webkit-details-marker { display: none; }
+.cam-summary:hover { background: rgba(255, 255, 255, 0.02); }
+.cam-summary .dot { flex: 0 0 auto; }
+.cam-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cam-name .title { font-weight: 600; }
+.cam-name .sub { font-size: 12px; color: var(--muted); }
+
+.cam-pills { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.pill-on  { color: var(--ok);  border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.pill-off { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.pill-rec { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+
+.chev { flex: 0 0 auto; color: var(--muted); transition: transform 0.15s ease; }
+.cam-card[open] > .cam-summary .chev { transform: rotate(180deg); }
+
+.cam-body { padding: 4px 16px 18px; }
+.cam-section { padding: 12px 0; border-top: 1px dashed var(--line); }
+.cam-section:first-child { border-top: 0; }
+.cam-section-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin-bottom: 10px;
+}
+.cam-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+.cam-row .setting { margin: 0; }
+.cam-row .spacer { flex: 1 1 auto; }
+
+/* Online switch */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.switch input { width: 16px; height: 16px; accent-color: var(--ok); }
+
+.cam-danger .cam-row { align-items: center; }

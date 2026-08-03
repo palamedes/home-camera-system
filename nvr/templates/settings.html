@@ -36,173 +36,189 @@
   </div>
 </div>
 
+{% set retentions = [
+  ('28800', '8 hours'), ('86400', '1 day'), ('259200', '3 days'),
+  ('604800', '7 days'), ('1209600', '14 days'), ('2592000', '30 days')
+] %}
+{% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+{% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
+
 <div class="panel">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
     <h2 style="margin: 0; font-size: 16px;">Cameras</h2>
     <a class="btn btn-sm btn-primary" href="/discover">Add camera</a>
   </div>
-  <div class="list list-cameras">
-    {% set retentions = [
-      ('28800', '8 hours'), ('86400', '1 day'), ('259200', '3 days'),
-      ('604800', '7 days'), ('1209600', '14 days'), ('2592000', '30 days')
-    ] %}
+  <div class="list list-cameras cam-cards">
     {% for camera in cameras %}
-    <div class="list-item" data-camera="{{ camera.id }}">
-      <div class="grow">
-        <div class="title-row">
-          <a class="title" data-name href="/cameras/{{ camera.id }}">{{ camera.name }}</a>
-          <button class="icon-btn" data-rename title="Rename" aria-label="Rename camera">
-            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z" fill="none"
-                    stroke="currentColor" stroke-width="1.3"
-                    stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-        <div class="sub mono">{{ camera.host }} &middot; {{ camera.model or camera.brand or 'camera' }}</div>
+    <details class="cam-card" data-camera="{{ camera.id }}"{% if not camera.enabled %} data-disabled{% endif %}>
+      <summary class="cam-summary">
+        <span class="dot {{ 'dot-ok' if camera.online else 'dot-bad' }}"></span>
+        <span class="cam-name">
+          <span class="title" data-name>{{ camera.name }}</span>
+          <span class="sub mono">{{ camera.host }} &middot; {{ camera.model or camera.brand or 'camera' }}</span>
+        </span>
+        <span class="cam-pills">
+          {% if not camera.enabled %}<span class="pill pill-off">Disabled</span>
+          {% elif camera.online %}<span class="pill pill-on">Online</span>
+          {% else %}<span class="pill pill-off">Offline</span>{% endif %}
+          {% if camera.record %}<span class="pill pill-rec">&bull; Recording</span>{% endif %}
+          {% if camera.sched_count %}<span class="pill">{{ camera.sched_count }} sched.</span>{% endif %}
+        </span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </summary>
+      <div class="cam-body">
+
+        <section class="cam-section">
+          <div class="cam-section-label">Camera</div>
+          <div class="cam-row">
+            <label class="switch" title="Take the camera online or offline (offline stops streaming and recording)">
+              <input type="checkbox" data-enabled-toggle {{ 'checked' if camera.enabled }}>
+              <span>Online</span>
+            </label>
+            <button class="icon-btn" data-rename title="Rename" aria-label="Rename camera">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z" fill="none"
+                      stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <span class="spacer"></span>
+            <a class="btn btn-sm" href="/cameras/{{ camera.id }}">Live view</a>
+            <a class="btn btn-sm" href="/cameras/{{ camera.id }}/history">History</a>
+          </div>
+        </section>
+
+        <section class="cam-section">
+          <div class="cam-section-label">Recording</div>
+          <div class="cam-row">
+            <div class="setting">
+              <label for="rec-{{ camera.id }}">Recording</label>
+              <select id="rec-{{ camera.id }}" data-record-select class="rec-select">
+                <option value="on"  {{ 'selected' if camera.record and not camera.record_until }}>On</option>
+                <option value="off" {{ 'selected' if not camera.record }}>Off</option>
+                <optgroup label="For the next…">
+                  <option value="1h">Hour</option>
+                  <option value="24h">24 hours</option>
+                  <option value="3d">3 days</option>
+                  <option value="5d">5 days</option>
+                </optgroup>
+                {% if camera.record and camera.record_until %}
+                <option value="keep" selected>Timed window</option>
+                {% endif %}
+              </select>
+            </div>
+            <div class="setting" data-streams{% if camera.brand %} data-brand="{{ camera.brand }}"{% endif %}>
+              <label for="strm-{{ camera.id }}">Record stream</label>
+              <select id="strm-{{ camera.id }}" data-record-stream class="rec-select">
+                <option value="main" {{ 'selected' if camera.record_stream != 'sub' }}>Main</option>
+                <option value="sub" {{ 'selected' if camera.record_stream == 'sub' }}{{ ' disabled' if not camera.sub_url }}>Sub</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label for="ret-{{ camera.id }}">Keep footage</label>
+              <select id="ret-{{ camera.id }}" data-retention class="rec-select">
+                <option value="" {{ 'selected' if not camera.retention_seconds }}>Default ({{ storage.max_age_days }}d)</option>
+                {% for value, text in retentions %}
+                <option value="{{ value }}" {{ 'selected' if camera.retention_seconds == value | int }}>{{ text }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="stream-meta small muted" data-encoder></div>
+        </section>
+
+        <section class="cam-section">
+          <div class="cam-section-label">Views &amp; visibility</div>
+          <div class="cam-row">
+            <div class="checkbox">
+              <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye" {{ 'checked' if camera.fisheye }}>
+              <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera">360°</label>
+            </div>
+            <div class="checkbox">
+              <input type="checkbox" id="grid-{{ camera.id }}" data-toggle="show_on_grid" {{ 'checked' if camera.show_on_grid }}>
+              <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page">On grid</label>
+            </div>
+            <div class="checkbox">
+              <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible" {{ 'checked' if camera.viewer_visible }}>
+              <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
+            </div>
+          </div>
+        </section>
+
+        <section class="cam-section" data-sched-camera="{{ camera.id }}">
+          <div class="cam-section-label">Schedules
+            <span class="muted small">&mdash; server local time; an end before the start wraps past midnight</span>
+          </div>
+          <div class="sched-list" data-sched-list>
+            {% for s in schedules.get(camera.id, []) %}
+            <div class="sched-row" data-sched="{{ s.id }}">
+              <span class="sched-badge sched-{{ s.action }}">{{ actionlabels.get(s.action, s.action) }}</span>
+              <span class="sched-when mono">{{ '%02d:%02d' % (s.start_min // 60, s.start_min % 60) }}&ndash;{{ '%02d:%02d' % (s.end_min // 60, s.end_min % 60) }}</span>
+              <span class="sched-days">
+                {% for i in range(7) %}<span class="{{ 'on' if (s.days // (2 ** i)) % 2 else 'off' }}">{{ daynames[i] }}</span>{% endfor %}
+              </span>
+              {% if s.action == 'nightvision' %}<span class="muted small">{{ s.value }}</span>{% endif %}
+              <label class="checkbox sched-enabled">
+                <input type="checkbox" data-sched-enabled {{ 'checked' if s.enabled }}><span>On</span>
+              </label>
+              <button class="remove-x" data-sched-del title="Remove schedule" aria-label="Remove">&times;</button>
+            </div>
+            {% else %}
+            <div class="sched-empty muted small">No schedules yet.</div>
+            {% endfor %}
+          </div>
+          <form class="sched-add" data-sched-add>
+            <div class="setting">
+              <label>Action</label>
+              <select data-field="action" class="rec-select">
+                <option value="record">Record</option>
+                <option value="light">Spotlight</option>
+                <option value="nightvision">Night vision</option>
+              </select>
+            </div>
+            <div class="setting sched-nv" hidden>
+              <label>Mode</label>
+              <select data-field="value" class="rec-select">
+                <option value="auto">Auto</option>
+                <option value="color">Color</option>
+                <option value="bw">B/W</option>
+              </select>
+            </div>
+            <div class="setting">
+              <label>Start</label>
+              <input type="time" data-field="start" value="22:00" required>
+            </div>
+            <div class="setting">
+              <label>End</label>
+              <input type="time" data-field="end" value="06:00" required>
+            </div>
+            <div class="setting sched-daypick">
+              <label>Days</label>
+              <div class="sched-daybtns">
+                {% for i in range(7) %}<label><input type="checkbox" data-day="{{ i }}" checked>{{ daynames[i] }}</label>{% endfor %}
+              </div>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Add</button>
+          </form>
+        </section>
+
+        <section class="cam-section cam-danger">
+          <div class="cam-section-label">Danger zone</div>
+          <div class="cam-row">
+            <button class="btn btn-sm btn-danger" data-delete>Delete camera</button>
+            <span class="muted small">Recorded footage is kept on disk.</span>
+          </div>
+        </section>
+
       </div>
-      <div class="setting">
-        <label for="ret-{{ camera.id }}">Keep footage</label>
-        <select id="ret-{{ camera.id }}" data-retention class="rec-select">
-          <option value="" {{ 'selected' if not camera.retention_seconds }}>
-            Default ({{ storage.max_age_days }}d)
-          </option>
-          {% for value, text in retentions %}
-          <option value="{{ value }}"
-            {{ 'selected' if camera.retention_seconds == value | int }}>{{ text }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="setting">
-        <label for="rec-{{ camera.id }}">Recording</label>
-        <select id="rec-{{ camera.id }}" data-record-select class="rec-select">
-          <option value="on"  {{ 'selected' if camera.record and not camera.record_until }}>On</option>
-          <option value="off" {{ 'selected' if not camera.record }}>Off</option>
-          <optgroup label="For the next…">
-            <option value="1h">Hour</option>
-            <option value="24h">24 hours</option>
-            <option value="3d">3 days</option>
-            <option value="5d">5 days</option>
-          </optgroup>
-          {% if camera.record and camera.record_until %}
-          <option value="keep" selected>Timed window</option>
-          {% endif %}
-        </select>
-      </div>
-      <div class="setting" data-streams{% if camera.brand %} data-brand="{{ camera.brand }}"{% endif %}>
-        <label for="strm-{{ camera.id }}">Record stream</label>
-        <select id="strm-{{ camera.id }}" data-record-stream class="rec-select">
-          <option value="main" {{ 'selected' if camera.record_stream != 'sub' }}>Main</option>
-          <option value="sub" {{ 'selected' if camera.record_stream == 'sub' }}{{ ' disabled' if not camera.sub_url }}>Sub</option>
-        </select>
-        <div class="stream-meta small muted" data-encoder></div>
-      </div>
-      <div class="checkbox">
-        <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye"
-               {{ 'checked' if camera.fisheye }}>
-        <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera">360°</label>
-      </div>
-      <div class="checkbox">
-        <input type="checkbox" id="grid-{{ camera.id }}" data-toggle="show_on_grid"
-               {{ 'checked' if camera.show_on_grid }}>
-        <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page">On grid</label>
-      </div>
-      <div class="checkbox">
-        <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible"
-               {{ 'checked' if camera.viewer_visible }}>
-        <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
-      </div>
-      <a class="btn btn-sm" href="/cameras/{{ camera.id }}/history">History</a>
-      <button class="remove-x" data-delete title="Remove camera" aria-label="Remove">&times;</button>
-    </div>
+    </details>
     {% else %}
     <div class="list-item"><span class="muted">No cameras yet.</span></div>
     {% endfor %}
   </div>
 </div>
-
-{% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
-{% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
-{% if cameras %}
-<div class="panel" style="margin-top: 22px;">
-  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
-    <h2 style="margin: 0; font-size: 16px;">Schedules</h2>
-    <p class="muted small" style="margin: 4px 0 0;">
-      Time-of-day rules per camera, in server local time. A window whose end is
-      before its start wraps past midnight.
-    </p>
-  </div>
-  <div class="list">
-    {% for camera in cameras %}
-    <details class="sched-camera" data-sched-camera="{{ camera.id }}">
-      <summary>
-        <span class="sched-cam-name">{{ camera.name }}</span>
-        {% set count = schedules.get(camera.id, []) | length %}
-        <span class="muted small">{{ count }} rule{{ '' if count == 1 else 's' }}</span>
-      </summary>
-      <div class="sched-body">
-        <div class="sched-list" data-sched-list>
-          {% for s in schedules.get(camera.id, []) %}
-          <div class="sched-row" data-sched="{{ s.id }}">
-            <span class="sched-badge sched-{{ s.action }}">{{ actionlabels.get(s.action, s.action) }}</span>
-            <span class="sched-when mono">
-              {{ '%02d:%02d' % (s.start_min // 60, s.start_min % 60) }}–{{ '%02d:%02d' % (s.end_min // 60, s.end_min % 60) }}
-            </span>
-            <span class="sched-days">
-              {% for i in range(7) %}<span class="{{ 'on' if (s.days // (2 ** i)) % 2 else 'off' }}">{{ daynames[i] }}</span>{% endfor %}
-            </span>
-            {% if s.action == 'nightvision' %}<span class="muted small">{{ s.value }}</span>{% endif %}
-            <label class="checkbox sched-enabled">
-              <input type="checkbox" data-sched-enabled {{ 'checked' if s.enabled }}>
-              <span>On</span>
-            </label>
-            <button class="remove-x" data-sched-del title="Remove schedule" aria-label="Remove">&times;</button>
-          </div>
-          {% else %}
-          <div class="sched-empty muted small">No schedules yet.</div>
-          {% endfor %}
-        </div>
-        <form class="sched-add" data-sched-add>
-          <div class="setting">
-            <label>Action</label>
-            <select data-field="action" class="rec-select">
-              <option value="record">Record</option>
-              <option value="light">Spotlight</option>
-              <option value="nightvision">Night vision</option>
-            </select>
-          </div>
-          <div class="setting sched-nv" hidden>
-            <label>Mode</label>
-            <select data-field="value" class="rec-select">
-              <option value="auto">Auto</option>
-              <option value="color">Color</option>
-              <option value="bw">B/W</option>
-            </select>
-          </div>
-          <div class="setting">
-            <label>Start</label>
-            <input type="time" data-field="start" value="22:00" required>
-          </div>
-          <div class="setting">
-            <label>End</label>
-            <input type="time" data-field="end" value="06:00" required>
-          </div>
-          <div class="setting sched-daypick">
-            <label>Days</label>
-            <div class="sched-daybtns">
-              {% for i in range(7) %}
-              <label><input type="checkbox" data-day="{{ i }}" checked>{{ daynames[i] }}</label>
-              {% endfor %}
-            </div>
-          </div>
-          <button type="submit" class="btn btn-sm btn-primary">Add</button>
-        </form>
-      </div>
-    </details>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
 
 {% if virtuals %}
 <div class="panel" style="margin-top: 22px;">
@@ -403,8 +419,31 @@ function confirmRemove(kind, name, extra) {
   });
 })();
 
+// Don't let the online toggle (or its clicks) collapse the card it lives in.
+document.querySelectorAll('[data-enabled-toggle]').forEach(box => {
+  box.addEventListener('change', async () => {
+    const id = box.closest('[data-camera]').dataset.camera;
+    box.disabled = true;
+    try {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: box.checked }),
+      });
+      // Reload so the status pill, dot, and stream availability reflect the
+      // new state (disabling drops the camera out of go2rtc and recording).
+      if (r.ok) location.reload();
+      else box.checked = !box.checked;
+    } catch {
+      box.checked = !box.checked;
+    } finally {
+      box.disabled = false;
+    }
+  });
+});
+
 // One handler for every per-camera boolean: the data-toggle value is the
-// field name (record / fisheye / viewer_visible).
+// field name (fisheye / show_on_grid / viewer_visible).
 document.querySelectorAll('[data-toggle]').forEach(box => {
   box.addEventListener('change', async () => {
     const id = box.closest('[data-camera]').dataset.camera;
@@ -432,12 +471,15 @@ document.querySelectorAll('[data-rename]').forEach(button => {
     const nameEl = row.querySelector('[data-name]');
     const current = nameEl.textContent.trim();
 
-    // Swap the label for an input; Enter or blur commits, Escape cancels.
+    // Swap the label for an input; Enter or blur commits, Escape cancels. The
+    // input lives inside the card's <summary>, so stop its clicks from toggling
+    // the card open/closed while you type.
     const input = document.createElement('input');
     input.type = 'text';
     input.value = current;
     input.className = 'rename-input';
     input.maxLength = 60;
+    input.addEventListener('click', e => e.stopPropagation());
     nameEl.replaceWith(input);
     button.hidden = true;
     input.focus();
@@ -447,13 +489,12 @@ document.querySelectorAll('[data-rename]').forEach(button => {
     async function commit(save) {
       if (done) return;
       done = true;
-      const next = input.value.trim();
-      const label = document.createElement('a');   // the name is a link
+      const label = document.createElement('span');
       label.className = 'title';
       label.setAttribute('data-name', '');
-      label.href = `/cameras/${encodeURIComponent(id)}`;
 
-      if (save && next && next !== current) {
+      if (save && input.value.trim() && input.value.trim() !== current) {
+        const next = input.value.trim();
         try {
           const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
             method: 'PATCH',
@@ -469,7 +510,6 @@ document.querySelectorAll('[data-rename]').forEach(button => {
       }
       input.replaceWith(label);
       button.hidden = false;
-      // Rebind the fresh label's button (this handler is still attached to it).
     }
 
     input.addEventListener('keydown', event => {

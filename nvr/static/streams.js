@@ -86,6 +86,11 @@
     summary.textContent = 'Camera encoder';
     details.appendChild(summary);
 
+    const hint = document.createElement('div');
+    hint.className = 'encoder-hint muted small';
+    hint.textContent = '★ marks the camera’s current setting.';
+    details.appendChild(hint);
+
     for (const stream of streamsWithOpts) {
       details.appendChild(streamControls(id, stream, options[stream], data[stream] || {}));
     }
@@ -159,7 +164,9 @@
     for (const [value, text] of pairs) {
       const opt = document.createElement('option');
       opt.value = value;
-      opt.textContent = text;
+      // Mark the camera's currently-active value with a star so the admin can
+      // see which option is the working default among many.
+      opt.textContent = value === selected ? `${text} ★` : text;
       if (value === selected) opt.selected = true;
       sel.appendChild(opt);
     }
