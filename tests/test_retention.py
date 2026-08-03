@@ -92,49 +92,47 @@ def test_never_keeps_old_footage_when_space_is_free(app_module, db):
     assert ancient.exists()
 
 
-def test_rolling_keep_protects_recent_from_quota(app_module, db, monkeypatch):
-    """The rolling window is shielded from size-quota pruning; the oldest
-    unprotected footage is removed instead."""
+def test_rolling_window_keeps_recent_while_recording(app_module, db):
+    """Rolling keep removes footage older than (newest segment - window),
+    keeping ~the rolling amount during active recording."""
     cfg = app_module.cfg
-    # Never age-delete, but protect the last hour.
-    add_camera(db, "cam1", retention_seconds=0, rolling_keep_seconds=3600)
+    add_camera(db, "cam1", rolling_keep_seconds=3600, retention_seconds=0)
     now = time.time()
     old = _segment_file(cfg, "cam1/old.mp4")
     recent = _segment_file(cfg, "cam1/recent.mp4")
-    db.add_segment("cam1", str(old), now - 2 * 3600, 60.0, 100, "h264")   # unprotected
-    db.add_segment("cam1", str(recent), now - 600, 60.0, 100, "h264")     # protected
-    # Quota below the 200-byte total, satisfiable by dropping just the old one.
-    monkeypatch.setattr(cfg.storage, "max_bytes", lambda: 150)
+    db.add_segment("cam1", str(old), now - 3 * 3600, 60.0, 100, "h264")  # 3h old
+    db.add_segment("cam1", str(recent), now - 600, 60.0, 100, "h264")    # newest
 
     RetentionService(cfg, db).run_once()
 
-    assert not old.exists()     # oldest unprotected removed for the quota
-    assert recent.exists()      # rolling window kept despite being over quota
+    assert not old.exists()   # older than newest minus the 1h window
+    assert recent.exists()
 
 
-def test_quota_stops_rather_than_eat_rolling_window(app_module, db, monkeypatch):
-    """If only protected footage remains, the quota tier gives up instead of
-    deleting inside the rolling window."""
+def test_rolling_window_holds_footage_when_recording_stopped(app_module, db):
+    """The window is anchored to the newest segment, so when recording stops the
+    last captured window is held rather than aged out on a clock."""
     cfg = app_module.cfg
-    add_camera(db, "cam1", retention_seconds=0, rolling_keep_seconds=86400)
+    add_camera(db, "cam1", rolling_keep_seconds=3600, retention_seconds=0)
     now = time.time()
-    a = _segment_file(cfg, "cam1/a.mp4")
-    b = _segment_file(cfg, "cam1/b.mp4")
-    db.add_segment("cam1", str(a), now - 600, 60.0, 100, "h264")   # both within
-    db.add_segment("cam1", str(b), now - 300, 60.0, 100, "h264")   # the 1d window
-    monkeypatch.setattr(cfg.storage, "max_bytes", lambda: 50)      # far below total
+    # Recording stopped 5 days ago; this is the newest (and only) segment.
+    held = _segment_file(cfg, "cam1/held.mp4")
+    db.add_segment("cam1", str(held), now - 5 * 86400, 60.0, 100, "h264")
 
     RetentionService(cfg, db).run_once()
 
-    assert a.exists() and b.exists()  # protected footage survives the quota
+    assert held.exists()   # within its own rolling window; no hard cap to purge it
 
 
-def test_hard_cap_overrides_rolling_protection(app_module, db):
-    """The 'delete after' cap wins over the rolling window for footage past it."""
+def test_hard_cap_purges_held_footage(app_module, db):
+    """The absolute 'delete after' cap eventually purges footage the rolling
+    window would otherwise hold."""
     cfg = app_module.cfg
-    add_camera(db, "cam1", retention_seconds=3600, rolling_keep_seconds=86400)
+    add_camera(db, "cam1", rolling_keep_seconds=3600, retention_seconds=4 * 86400)
     now = time.time()
-    seg = _segment_file(cfg, "cam1/old.mp4")
-    db.add_segment("cam1", str(seg), now - 2 * 3600, 60.0, 100, "h264")  # past 1h cap
+    held = _segment_file(cfg, "cam1/held.mp4")
+    db.add_segment("cam1", str(held), now - 5 * 86400, 60.0, 100, "h264")  # 5 days old
+
     RetentionService(cfg, db).run_once()
-    assert not seg.exists()
+
+    assert not held.exists()   # past the 4-day hard cap

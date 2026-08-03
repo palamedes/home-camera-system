@@ -119,7 +119,7 @@
               </select>
             </div>
             <div class="setting">
-              <label for="roll-{{ camera.id }}" title="Recent footage kept safe from space cleanup — only the disk safety floor can override it">Rolling keep (min)</label>
+              <label for="roll-{{ camera.id }}" title="How much recent footage to keep while recording. Anchored to the newest clip, so if recording stops the last window is held (not deleted on a clock) until the 'delete after' cap.">Rolling keep</label>
               <select id="roll-{{ camera.id }}" data-rolling class="rec-select">
                 <option value="" {{ 'selected' if not camera.rolling_keep_seconds }}>None</option>
                 {% for value, text in retentions %}

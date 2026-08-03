@@ -73,11 +73,13 @@ class RetentionService:
         return size
 
     def _camera_windows(self) -> tuple[dict[str, tuple[int, int]], int]:
-        """Per-camera (hard_cap, rolling_min) in seconds, plus the global cap.
+        """Per-camera (hard_cap, rolling) in seconds, plus the global cap.
 
-        hard_cap: delete footage older than this no matter what. Falls back to
-        the global limit when unset (NULL); 0 means "never delete by age".
-        rolling_min: the recent window protected from space-based pruning.
+        hard_cap: delete footage older than this (absolute, from now) no matter
+        what. Falls back to the global limit when unset (NULL); 0 means "never
+        delete by age".
+        rolling: keep only this much of the most recent footage, measured from
+        the newest segment. 0 means no rolling window (accumulate to the cap).
         """
         global_hard = self.config.storage.max_age_days * 86400
         windows: dict[str, tuple[int, int]] = {}
@@ -94,9 +96,19 @@ class RetentionService:
         now = time.time()
         windows, global_hard = self._camera_windows()
 
-        # 1. Hard age cap — per camera. Footage older than the cap is deleted
-        #    regardless of free space (this is the "delete no matter what" tier).
-        for cam_id, (hard, _rolling) in windows.items():
+        for cam_id, (hard, rolling) in windows.items():
+            # 1. Rolling window — keep only the most recent `rolling` of footage,
+            #    measured from the NEWEST segment rather than from now. Anchoring
+            #    to the latest footage means the window stops advancing when a
+            #    camera stops recording, so the last captured window is held
+            #    (not deleted on a clock) until the hard cap below purges it.
+            if rolling > 0:
+                bounds = self.db.segment_bounds(cam_id)
+                if bounds:
+                    d, f = self._prune_older_than(cam_id, bounds[1] - rolling)
+                    deleted += d
+                    freed += f
+            # 2. Hard cap — absolute max age from now; deletes no matter what.
             if hard > 0:
                 d, f = self._prune_older_than(cam_id, now - hard)
                 deleted += d
@@ -112,16 +124,8 @@ class RetentionService:
                 deleted += d
                 freed += f
 
-        # A segment is protected from the space tiers while it is newer than its
-        # camera's rolling-keep window. Recent footage (the rolling minimum) thus
-        # survives space pressure — only the free-space safety floor overrides it.
-        def protected(row: Any) -> bool:
-            rolling = windows.get(row["camera_id"], (0, 0))[1]
-            return rolling > 0 and (now - float(row["start_ts"])) < rolling
-
-        # 2. Size quota — delete the oldest UNPROTECTED footage first, and stop
-        #    rather than eat into a rolling window even if that leaves us over
-        #    quota (the free-space floor below is the real backstop).
+        # 3. Size quota — oldest-first, a backstop for when even the rolling
+        #    windows add up to more than the disk budget.
         try:
             quota = self.config.storage.max_bytes()
         except (OSError, ValueError):
@@ -132,51 +136,31 @@ class RetentionService:
                 rows = self.db.oldest_segments(limit=BATCH)
                 if not rows:
                     break
-                progressed = False
                 for row in rows:
                     if total <= quota:
                         break
-                    if protected(row):
-                        continue
                     size = self._delete(row)
                     total -= size
                     freed += size
                     deleted += 1
-                    progressed = True
-                if not progressed:
-                    break  # only protected footage left; respect it over quota
+                else:
+                    continue
+                break
 
-        # 3. Free-space backstop. First reclaim unprotected footage; only if the
-        #    disk is still dangerously full do we override rolling protection —
-        #    filling the root filesystem would take down the OS and database.
+        # 4. Free-space backstop — the hard floor that keeps the OS alive.
         usage = shutil.disk_usage(self.config.storage.recordings_dir)
-        if usage.free < FREE_SPACE_FLOOR:
-            while usage.free < FREE_SPACE_FLOOR:
-                rows = self.db.oldest_segments(limit=BATCH)
-                unprotected = [r for r in rows if not protected(r)]
-                if not unprotected:
-                    break
-                for row in unprotected:
-                    freed += self._delete(row)
-                    deleted += 1
-                usage = shutil.disk_usage(self.config.storage.recordings_dir)
-
-            while usage.free < FREE_SPACE_FLOOR:
-                rows = self.db.oldest_segments(limit=BATCH)
-                if not rows:
-                    log.error(
-                        "disk below %s free but no recordings left to prune",
-                        FREE_SPACE_FLOOR,
-                    )
-                    break
-                log.warning(
-                    "disk below %s free; overriding rolling-keep protection",
+        while usage.free < FREE_SPACE_FLOOR:
+            rows = self.db.oldest_segments(limit=BATCH)
+            if not rows:
+                log.error(
+                    "disk below %s free but no recordings left to prune",
                     FREE_SPACE_FLOOR,
                 )
-                for row in rows:
-                    freed += self._delete(row)
-                    deleted += 1
-                usage = shutil.disk_usage(self.config.storage.recordings_dir)
+                break
+            for row in rows:
+                freed += self._delete(row)
+                deleted += 1
+            usage = shutil.disk_usage(self.config.storage.recordings_dir)
 
         self.prune_empty_directories()
         self.last_run = time.time()

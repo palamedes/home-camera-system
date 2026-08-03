@@ -82,31 +82,39 @@
     return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${u[i]}`;
   }
 
-  function retentionDays(retSel) {
-    if (!retSel) return null;
-    if (retSel.value === '') return parseFloat(retSel.dataset.defaultDays) || null;
-    return parseInt(retSel.value, 10) / 86400;
+  // Days of footage normally on disk: the rolling window if set, otherwise the
+  // hard "delete after" cap ("" = global default; "0"/never = unbounded -> null).
+  function keepDays(row) {
+    const roll = row.querySelector('[data-rolling]');
+    if (roll && roll.value !== '') return parseInt(roll.value, 10) / 86400;
+    const ret = row.querySelector('[data-retention]');
+    if (!ret) return null;
+    if (ret.value === '') return parseFloat(ret.dataset.defaultDays) || null;
+    const seconds = parseInt(ret.value, 10);
+    return seconds > 0 ? seconds / 86400 : null;
   }
 
-  // Rough steady-state disk use: bitrate (kbps) recorded continuously over the
-  // retention window. Recomputes when the record-stream or retention changes.
+  // Rough steady-state disk use: the selected stream's bitrate recorded over the
+  // window normally kept. Recomputes when stream / rolling / cap change.
   function wireEstimate(select, data) {
     const row = select.closest('[data-camera]');
     const estEl = row && row.querySelector('[data-storage-est]');
-    const retSel = row && row.querySelector('[data-retention]');
     if (!estEl) return;
 
     function recompute() {
       const info = data[select.value];
       const kbps = info && info.bitrate;
-      const days = retentionDays(retSel);
+      const days = keepDays(row);
       if (!kbps || !days) { estEl.textContent = '—'; return; }
       // kbps -> bytes/s is ×1000/8 = ×125; × seconds over the window.
       estEl.textContent = '≈ ' + humanSize(kbps * 125 * days * 86400);
     }
 
+    ['[data-rolling]', '[data-retention]'].forEach(s => {
+      const el = row.querySelector(s);
+      if (el) el.addEventListener('change', recompute);
+    });
     select.addEventListener('change', recompute);
-    if (retSel) retSel.addEventListener('change', recompute);
     recompute();
   }
 
