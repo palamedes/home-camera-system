@@ -328,6 +328,17 @@ a { color: inherit; text-decoration: none; }
 .btn-ghost { background: transparent; }
 .btn-sm { padding: 6px 11px; font-size: 13px; }
 
+/* Push-to-talk: no text selection / touch-scroll while held, and a clear
+   "on air" state so it is obvious the mic is live. */
+#talk-btn { touch-action: none; user-select: none; -webkit-user-select: none; }
+#talk-btn.talk-live {
+  background: rgb(239 68 68 / .16);
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+#talk-note { align-self: center; }
+#talk-note.talk-error { color: #fca5a5; }
+
 label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
 
 input[type=text], input[type=password], select {
