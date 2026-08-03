@@ -119,12 +119,16 @@
             </div>
             <div class="setting">
               <label for="ret-{{ camera.id }}">Keep footage</label>
-              <select id="ret-{{ camera.id }}" data-retention class="rec-select">
+              <select id="ret-{{ camera.id }}" data-retention data-default-days="{{ storage.max_age_days }}" class="rec-select">
                 <option value="" {{ 'selected' if not camera.retention_seconds }}>Default ({{ storage.max_age_days }}d)</option>
                 {% for value, text in retentions %}
                 <option value="{{ value }}" {{ 'selected' if camera.retention_seconds == value | int }}>{{ text }}</option>
                 {% endfor %}
               </select>
+            </div>
+            <div class="setting est">
+              <label title="Rough disk use if this stream recorded continuously for the full retention window">Est. storage</label>
+              <span class="est-val" data-storage-est>&mdash;</span>
             </div>
           </div>
           <div class="stream-meta small muted" data-encoder></div>
@@ -236,6 +240,11 @@
           <span class="vcam-from">from {{ v.parent_name }}</span>
         </div>
         <div class="sub small">dewarped 360 view</div>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="vgrid-{{ v.id }}" data-vcam-grid="{{ v.id }}"
+               {{ 'checked' if v.show_on_grid }}>
+        <label for="vgrid-{{ v.id }}" title="Show this virtual camera's tile on the dashboard and Cameras page">On grid</label>
       </div>
       <div class="checkbox">
         <input type="checkbox" id="vvis-{{ v.id }}" data-vcam-vis="{{ v.id }}"
@@ -540,17 +549,21 @@ document.querySelectorAll('select[data-record-select]').forEach(select => {
   });
 });
 
-document.querySelectorAll('[data-vcam-vis]').forEach(box => {
-  box.addEventListener('change', async () => {
-    box.disabled = true;
-    try {
-      const r = await fetch(`/api/virtual/${box.dataset.vcamVis}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ viewer_visible: box.checked }),
-      });
-      if (!r.ok) box.checked = !box.checked;
-    } catch { box.checked = !box.checked; }
-    finally { box.disabled = false; }
+// Virtual-camera booleans: data-vcam-vis (viewer_visible) and data-vcam-grid
+// (show_on_grid). Both PUT the matching field and revert the box on failure.
+[['data-vcam-vis', 'viewer_visible'], ['data-vcam-grid', 'show_on_grid']].forEach(([attr, field]) => {
+  document.querySelectorAll(`[${attr}]`).forEach(box => {
+    box.addEventListener('change', async () => {
+      box.disabled = true;
+      try {
+        const r = await fetch(`/api/virtual/${box.getAttribute(attr)}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: box.checked }),
+        });
+        if (!r.ok) box.checked = !box.checked;
+      } catch { box.checked = !box.checked; }
+      finally { box.disabled = false; }
+    });
   });
 });
 

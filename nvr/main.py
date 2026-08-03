@@ -427,6 +427,7 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "view": {"yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"]},
             "calib": calib,
             "viewer_visible": bool(v["viewer_visible"]),
+            "show_on_grid": bool(v["show_on_grid"]),
             "online": _online(parent, info),
         })
     return result
@@ -440,7 +441,7 @@ def dashboard(request: Request):
         request, "dashboard.html",
         cameras=cameras,   # all viewable, for the System recording controls
         grid=grid,         # only those shown as tiles
-        virtuals=virtual_view_models(request),
+        virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
         total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
@@ -455,7 +456,7 @@ def cameras_page(request: Request):
         request, "cameras.html",
         cameras=[c for c in cameras if c["show_on_grid"]],
         total=len(cameras),
-        virtuals=virtual_view_models(request),
+        virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
         storage=retention.estimate(),
     )
 
@@ -468,7 +469,7 @@ def wall(request: Request):
     return render(
         request, "wall.html",
         cameras=cameras,
-        virtuals=virtual_view_models(request),
+        virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
     )
 
 
@@ -943,6 +944,8 @@ async def api_update_virtual(vid: int, request: Request):
         fields["calib"] = _json.dumps(payload["calib"] or {})
     if "viewer_visible" in payload:
         fields["viewer_visible"] = 1 if payload["viewer_visible"] else 0
+    if "show_on_grid" in payload:
+        fields["show_on_grid"] = 1 if payload["show_on_grid"] else 0
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
     assigns = ", ".join(f"{k} = ?" for k in fields)

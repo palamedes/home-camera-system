@@ -69,6 +69,45 @@
       const sub = resLabel(data.sub);
       if (sub) meta.textContent = `Sub ${sub}`;
     }
+
+    wireEstimate(select, data);
+  }
+
+  // ---- storage estimate --------------------------------------------------
+
+  function humanSize(bytes) {
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let n = bytes, i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${u[i]}`;
+  }
+
+  function retentionDays(retSel) {
+    if (!retSel) return null;
+    if (retSel.value === '') return parseFloat(retSel.dataset.defaultDays) || null;
+    return parseInt(retSel.value, 10) / 86400;
+  }
+
+  // Rough steady-state disk use: bitrate (kbps) recorded continuously over the
+  // retention window. Recomputes when the record-stream or retention changes.
+  function wireEstimate(select, data) {
+    const row = select.closest('[data-camera]');
+    const estEl = row && row.querySelector('[data-storage-est]');
+    const retSel = row && row.querySelector('[data-retention]');
+    if (!estEl) return;
+
+    function recompute() {
+      const info = data[select.value];
+      const kbps = info && info.bitrate;
+      const days = retentionDays(retSel);
+      if (!kbps || !days) { estEl.textContent = '—'; return; }
+      // kbps -> bytes/s is ×1000/8 = ×125; × seconds over the window.
+      estEl.textContent = '≈ ' + humanSize(kbps * 125 * days * 86400);
+    }
+
+    select.addEventListener('change', recompute);
+    if (retSel) retSel.addEventListener('change', recompute);
+    recompute();
   }
 
   // ---- Reolink encoder control ------------------------------------------
