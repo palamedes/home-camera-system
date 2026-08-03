@@ -357,6 +357,26 @@ input:focus, select:focus {
 .checkbox input { width: auto; }
 .checkbox label { margin: 0; color: var(--text); font-size: 14px; }
 
+/* ---- per-camera stream / encoder control (settings) ---- */
+
+.stream-meta { margin-top: 2px; font-size: 12px; }
+.encoder-ctl { margin-top: 2px; }
+.encoder-ctl summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.encoder-ctl summary:hover { color: var(--text); }
+.encoder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.encoder-row .encoder-label {
+  min-width: 34px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.encoder-row .rec-select { min-width: 0; }
+
 /* ---- auth screens ---- */
 
 .auth-shell {

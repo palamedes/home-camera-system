@@ -177,6 +177,68 @@ class ReolinkClient:
             )
         return info
 
+    # ---- encoder control (GetEnc / SetEnc) -------------------------------
+
+    def encoder_options(self, channel: int = 0) -> dict[str, Any]:
+        """Resolutions and bitrates the camera advertises for each stream.
+
+        GetEnc with action=1 returns both the current `value` and a `range` of
+        acceptable settings. The range's shape varies across firmware, so the
+        actual flattening lives in streamprobe.normalise_enc_range; here we just
+        pull the per-stream blocks out. Returns {} on any failure — encoder
+        control then degrades to read-only.
+        """
+        from . import streamprobe
+
+        try:
+            data = self._call(
+                [{"cmd": "GetEnc", "action": 1, "param": {"channel": channel}}]
+            )[0]
+        except Exception:
+            return {}
+        rng = (data.get("range") or {})
+        enc_range = rng.get("Enc") if isinstance(rng, dict) else None
+        # Some firmware nests the per-stream ranges under a list.
+        if isinstance(enc_range, list):
+            enc_range = enc_range[0] if enc_range else None
+        if not isinstance(enc_range, dict):
+            return {}
+        out: dict[str, Any] = {}
+        for key, name in (("mainStream", "main"), ("subStream", "sub")):
+            opts = streamprobe.normalise_enc_range(enc_range.get(key))
+            if opts:
+                out[name] = opts
+        return out
+
+    def set_encoding(
+        self, stream: str, size: str | None = None,
+        bitrate: int | None = None, channel: int = 0,
+    ) -> None:
+        """Change one stream's resolution and/or bitrate via SetEnc.
+
+        SetEnc replaces the whole Enc block, so we read the current one, patch
+        the requested stream in place, and write it all back — leaving every
+        other setting (the other streams, audio, GOP, profile) untouched.
+        Raises RuntimeError on an unsupported stream or a camera-side rejection.
+        """
+        key = {"main": "mainStream", "sub": "subStream", "ext": "extStream"}.get(stream)
+        if not key:
+            raise ValueError(f"unknown stream {stream!r}")
+        enc = self._call(
+            [{"cmd": "GetEnc", "action": 0, "param": {"channel": channel}}]
+        )[0]["value"]["Enc"]
+        block = dict(enc.get(key) or {})
+        if not block:
+            raise RuntimeError(f"camera has no {stream} stream to configure")
+        if size is not None:
+            block["size"] = str(size)
+        if bitrate is not None:
+            block["bitRate"] = int(bitrate)
+        new_enc = dict(enc)
+        new_enc["channel"] = int(enc.get("channel", channel))
+        new_enc[key] = block
+        self._call([{"cmd": "SetEnc", "param": {"Enc": new_enc}}])
+
 
 def rtsp_url(
     host: str, username: str, password: str, stream: str = "main",
