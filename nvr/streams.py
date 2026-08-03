@@ -62,6 +62,17 @@ def sub_stream_name(camera_id: str) -> str:
     return f"{camera_id}_sub"
 
 
+def talk_stream_name(camera_id: str) -> str:
+    """Dedicated stream used only for push-to-talk (two-way audio).
+
+    Kept separate from the main/sub streams on purpose: the browser's talk
+    session pushes a microphone track into this stream's RTSP backchannel, and
+    isolating it means a backchannel (re)connect can never disturb the live
+    view, which rides on the main/sub producers.
+    """
+    return f"{camera_id}_talk"
+
+
 def _lan_ip() -> str | None:
     """Best-guess LAN address, used as a WebRTC ICE candidate."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -97,6 +108,15 @@ class Go2rtcManager:
                 streams[sub_stream_name(camera["id"])] = self._sources(
                     sub_stream_name(camera["id"]), camera["sub_url"]
                 )
+            # A push-to-talk backchannel stream for every camera with an RTSP
+            # URL. It is inert — go2rtc only dials it when a Talk session
+            # actually connects — so it costs nothing on cameras that never use
+            # it, and, crucially, leaves the main/sub sources untouched so
+            # normal streaming is unaffected whether or not the camera supports
+            # a backchannel. See _talk_source.
+            talk_url = camera["sub_url"] or camera["main_url"]
+            if talk_url:
+                streams[talk_stream_name(camera["id"])] = self._talk_source(talk_url)
 
         webrtc: dict[str, Any] = {"listen": f":{self.config.go2rtc.webrtc_port}"}
         ip = _lan_ip()
@@ -123,6 +143,23 @@ class Go2rtcManager:
         connection.
         """
         return [url, f"ffmpeg:{name}#audio=opus"]
+
+    def _talk_source(self, url: str) -> list[str]:
+        """A single RTSP source that negotiates the two-way-audio backchannel.
+
+        `#backchannel=1` tells go2rtc to advertise the camera's ONVIF/RTSP
+        talk-back audio track as a destination a WebRTC consumer can *send* to.
+        go2rtc already negotiates the backchannel by default, so this is mostly
+        an explicit statement of intent — but pinning it on this dedicated
+        connection keeps the behaviour predictable regardless of the default.
+
+        Safety: this is its own go2rtc stream and thus its own RTSP connection,
+        opened on demand only when someone presses Talk. A camera that does not
+        support a backchannel simply yields a session that carries no audio (the
+        browser side detects this and reports it); the main/sub streams — and
+        therefore the live view and recorder — are never touched.
+        """
+        return [f"{url}#backchannel=1"]
 
     def write_config(self) -> bool:
         """Write go2rtc.yaml. Returns True if the contents changed."""

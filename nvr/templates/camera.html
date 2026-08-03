@@ -43,6 +43,11 @@
   {% endif %}
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
+  {% if is_admin %}
+  <button class="btn" id="talk-btn" data-stream="{{ talk_stream_name }}"
+          aria-pressed="false"
+          title="Hold to talk to the camera's speaker">🎤 Talk</button>
+  {% endif %}
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
   <div class="replay" id="replay" title="Drag left to rewind the last few minutes">
     <span class="replay-label" id="replay-label">LIVE</span>
@@ -50,6 +55,7 @@
            aria-label="Instant replay — drag left to rewind">
   </div>
   <span class="muted small" id="mode-label"></span>
+  {% if is_admin %}<span class="small" id="talk-note" role="status" aria-live="polite"></span>{% endif %}
 </div>
 
 {% if camera.fisheye %}
@@ -121,6 +127,7 @@
 {% block scripts %}
 <script src="{{ asset('live.js') }}"></script>
 <script src="{{ asset('replay.js') }}"></script>
+{% if is_admin %}<script src="{{ asset('talk.js') }}"></script>{% endif %}
 {% if camera.fisheye %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 document.querySelectorAll('#oldest, #newest').forEach(el => {

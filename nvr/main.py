@@ -463,6 +463,7 @@ def camera_page(request: Request, camera_id: str):
         recorder=recording.status().get(camera_id, {}),
         stream_name=streams.main_stream_name(camera_id),
         sub_stream_name=streams.sub_stream_name(camera_id),
+        talk_stream_name=streams.talk_stream_name(camera_id),
     )
 
 
