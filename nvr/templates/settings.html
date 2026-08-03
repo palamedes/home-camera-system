@@ -121,6 +121,89 @@
   </div>
 </div>
 
+{% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+{% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
+{% if cameras %}
+<div class="panel" style="margin-top: 22px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
+    <h2 style="margin: 0; font-size: 16px;">Schedules</h2>
+    <p class="muted small" style="margin: 4px 0 0;">
+      Time-of-day rules per camera, in server local time. A window whose end is
+      before its start wraps past midnight.
+    </p>
+  </div>
+  <div class="list">
+    {% for camera in cameras %}
+    <details class="sched-camera" data-sched-camera="{{ camera.id }}">
+      <summary>
+        <span class="sched-cam-name">{{ camera.name }}</span>
+        {% set count = schedules.get(camera.id, []) | length %}
+        <span class="muted small">{{ count }} rule{{ '' if count == 1 else 's' }}</span>
+      </summary>
+      <div class="sched-body">
+        <div class="sched-list" data-sched-list>
+          {% for s in schedules.get(camera.id, []) %}
+          <div class="sched-row" data-sched="{{ s.id }}">
+            <span class="sched-badge sched-{{ s.action }}">{{ actionlabels.get(s.action, s.action) }}</span>
+            <span class="sched-when mono">
+              {{ '%02d:%02d' % (s.start_min // 60, s.start_min % 60) }}–{{ '%02d:%02d' % (s.end_min // 60, s.end_min % 60) }}
+            </span>
+            <span class="sched-days">
+              {% for i in range(7) %}<span class="{{ 'on' if s.days & (2 ** i) else 'off' }}">{{ daynames[i] }}</span>{% endfor %}
+            </span>
+            {% if s.action == 'nightvision' %}<span class="muted small">{{ s.value }}</span>{% endif %}
+            <label class="checkbox sched-enabled">
+              <input type="checkbox" data-sched-enabled {{ 'checked' if s.enabled }}>
+              <span>On</span>
+            </label>
+            <button class="remove-x" data-sched-del title="Remove schedule" aria-label="Remove">&times;</button>
+          </div>
+          {% else %}
+          <div class="sched-empty muted small">No schedules yet.</div>
+          {% endfor %}
+        </div>
+        <form class="sched-add" data-sched-add>
+          <div class="setting">
+            <label>Action</label>
+            <select data-field="action" class="rec-select">
+              <option value="record">Record</option>
+              <option value="light">Spotlight</option>
+              <option value="nightvision">Night vision</option>
+            </select>
+          </div>
+          <div class="setting sched-nv" hidden>
+            <label>Mode</label>
+            <select data-field="value" class="rec-select">
+              <option value="auto">Auto</option>
+              <option value="color">Color</option>
+              <option value="bw">B/W</option>
+            </select>
+          </div>
+          <div class="setting">
+            <label>Start</label>
+            <input type="time" data-field="start" value="22:00" required>
+          </div>
+          <div class="setting">
+            <label>End</label>
+            <input type="time" data-field="end" value="06:00" required>
+          </div>
+          <div class="setting sched-daypick">
+            <label>Days</label>
+            <div class="sched-daybtns">
+              {% for i in range(7) %}
+              <label><input type="checkbox" data-day="{{ i }}" checked>{{ daynames[i] }}</label>
+              {% endfor %}
+            </div>
+          </div>
+          <button type="submit" class="btn btn-sm btn-primary">Add</button>
+        </form>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if virtuals %}
 <div class="panel" style="margin-top: 22px;">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
@@ -222,6 +305,7 @@
 
 {% block scripts %}
 <script src="{{ asset('streams.js') }}"></script>
+<script src="{{ asset('schedules.js') }}"></script>
 <script>
 // A deliberate "double clutch" for every destructive action: you must type the
 // exact name to confirm a removal.

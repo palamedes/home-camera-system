@@ -111,6 +111,27 @@ CREATE TABLE IF NOT EXISTS clips (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_clips_created ON clips(created_at);
+
+-- Time-of-day schedules that drive per-camera actions. Each row is one rule:
+-- "on these weekdays, between these minutes-of-day, this action holds". The
+-- SchedulerService walks these every minute and applies them. Windows are in
+-- server local time; end_min < start_min means the window wraps past midnight.
+CREATE TABLE IF NOT EXISTS schedules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    camera_id  TEXT    NOT NULL,
+    -- 'record' | 'light' | 'nightvision'
+    action     TEXT    NOT NULL,
+    -- 7-bit weekday mask: bit0=Mon .. bit6=Sun.
+    days       INTEGER NOT NULL DEFAULT 127,
+    -- Minutes past midnight, 0..1439. end_min may be < start_min (wraps).
+    start_min  INTEGER NOT NULL,
+    end_min    INTEGER NOT NULL,
+    -- Action parameter: nightvision mode (auto|color|bw); "on" for light/record.
+    value      TEXT    NOT NULL DEFAULT 'on',
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_schedules_camera ON schedules(camera_id);
 """
 
 
@@ -272,6 +293,7 @@ class Database:
         self.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
         self.execute("DELETE FROM segments WHERE camera_id = ?", (camera_id,))
         self.execute("DELETE FROM virtual_cameras WHERE parent_id = ?", (camera_id,))
+        self.execute("DELETE FROM schedules WHERE camera_id = ?", (camera_id,))
 
     # ---- virtual cameras -------------------------------------------------
 
@@ -320,6 +342,39 @@ class Database:
 
     def delete_clip(self, clip_id: int) -> None:
         self.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
+
+    # ---- schedules -------------------------------------------------------
+
+    def schedules(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM schedules ORDER BY camera_id, start_min")
+
+    def schedules_for(self, camera_id: str) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM schedules WHERE camera_id = ? ORDER BY start_min",
+            (camera_id,),
+        )
+
+    def add_schedule(
+        self, camera_id: str, action: str, days: int, start_min: int,
+        end_min: int, value: str = "on", enabled: int = 1,
+    ) -> int:
+        cur = self.execute(
+            "INSERT INTO schedules "
+            "(camera_id, action, days, start_min, end_min, value, enabled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (camera_id, action, days, start_min, end_min, value, enabled,
+             int(time.time())),
+        )
+        return int(cur.lastrowid or 0)
+
+    def delete_schedule(self, schedule_id: int) -> None:
+        self.execute("DELETE FROM schedules WHERE id = ?", (schedule_id,))
+
+    def set_schedule_enabled(self, schedule_id: int, on: bool) -> None:
+        self.execute(
+            "UPDATE schedules SET enabled = ? WHERE id = ?",
+            (1 if on else 0, schedule_id),
+        )
 
     # ---- segments --------------------------------------------------------
 
