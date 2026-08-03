@@ -727,6 +727,80 @@ a.title:hover { color: var(--accent); }
 .ref-routine li { font-size: 13px; line-height: 1.6; color: var(--muted); }
 .ref-routine a { color: var(--text); }
 
+/* ---- camera schedules ---- */
+
+.sched-camera { border-bottom: 1px solid var(--line); }
+.sched-camera:last-child { border-bottom: none; }
+.sched-camera > summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.sched-cam-name { font-weight: 550; font-size: 14.5px; }
+.sched-body { padding: 0 18px 16px; }
+
+.sched-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.sched-empty { padding: 8px 0; }
+
+.sched-badge {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.sched-badge.sched-record { color: #f87171; }
+.sched-badge.sched-light { color: #fbbf24; }
+.sched-badge.sched-nightvision { color: #818cf8; }
+
+.sched-when { font-size: 13px; }
+.sched-days { display: flex; gap: 3px; }
+.sched-days span {
+  font-size: 10.5px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.sched-days span.on { color: var(--text); background: var(--panel-2); }
+.sched-days span.off { opacity: .4; }
+
+.sched-enabled { margin-left: auto; }
+.sched-enabled span { font-size: 13px; color: var(--muted); }
+
+.sched-add {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+.sched-add input[type="time"] { width: auto; }
+.sched-daybtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.sched-daybtns label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.sched-daybtns input { width: auto; }
+
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .nowrap { white-space: nowrap; }

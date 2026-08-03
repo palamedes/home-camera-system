@@ -22,6 +22,7 @@ from . import auth, config as config_module, discovery, playback, proxy, streams
 from .db import Database
 from .recorder import RecordingService
 from .retention import RetentionService
+from .scheduler import SchedulerService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +37,7 @@ db = Database(cfg.db_path)
 go2rtc = streams.Go2rtcManager(cfg, db)
 recording = RecordingService(cfg, db, go2rtc)
 retention = RetentionService(cfg, db)
+scheduler = SchedulerService(cfg, db, recording)
 
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 templates.env.filters["human_size"] = config_module.human_size
@@ -68,12 +70,14 @@ async def lifespan(_app: FastAPI):
     if not go2rtc.wait_ready(timeout=15.0):
         log.warning("go2rtc did not report ready within 15s; starting recorders anyway")
     recording.start()
+    scheduler.start()
     retention.start()
     log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
     try:
         yield
     finally:
         retention.stop()
+        scheduler.stop()
         recording.stop()
         go2rtc.stop()
 
@@ -513,9 +517,13 @@ def settings_page(request: Request):
     me = auth.current_user(request)
     if not auth.is_admin(me):
         return RedirectResponse("/", status_code=303)
+    schedules: dict[str, list[dict[str, Any]]] = {}
+    for row in db.schedules():
+        schedules.setdefault(row["camera_id"], []).append(_schedule_dict(row))
     return render(
         request, "settings.html",
         cameras=[dict(row) for row in db.cameras()],
+        schedules=schedules,
         virtuals=virtual_view_models(request),
         storage=retention.estimate(),
         config=cfg,
@@ -691,6 +699,98 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     go2rtc.reload()
     recording.sync()
     return JSONResponse({"ok": True, "purged": purge})
+
+
+# ---------------------------------------------------------------------------
+# API — camera schedules (time-of-day rules; admin only via /api/cameras)
+# ---------------------------------------------------------------------------
+
+SCHEDULE_ACTIONS = {"record", "light", "nightvision"}
+NIGHTVISION_MODES = {"auto", "color", "bw"}
+
+
+def _schedule_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "camera_id": row["camera_id"],
+        "action": row["action"],
+        "days": row["days"],
+        "start_min": row["start_min"],
+        "end_min": row["end_min"],
+        "value": row["value"],
+        "enabled": bool(row["enabled"]),
+        "created_at": row["created_at"],
+    }
+
+
+@app.get("/api/cameras/{camera_id}/schedules")
+def api_list_schedules(camera_id: str):
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse([_schedule_dict(s) for s in db.schedules_for(camera_id)])
+
+
+@app.post("/api/cameras/{camera_id}/schedules")
+async def api_create_schedule(camera_id: str, request: Request):
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+
+    action = payload.get("action")
+    if action not in SCHEDULE_ACTIONS:
+        return JSONResponse({"error": "invalid action"}, status_code=400)
+
+    try:
+        days = int(payload.get("days"))
+        start_min = int(payload.get("start_min"))
+        end_min = int(payload.get("end_min"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "days and times must be integers"}, status_code=400)
+
+    if not (0 <= days <= 127):
+        return JSONResponse({"error": "days must be a 0..127 bitmask"}, status_code=400)
+    if days == 0:
+        return JSONResponse({"error": "select at least one day"}, status_code=400)
+    if not (0 <= start_min <= 1439 and 0 <= end_min <= 1439):
+        return JSONResponse({"error": "times must be within 0..1439"}, status_code=400)
+    if start_min == end_min:
+        return JSONResponse({"error": "start and end must differ"}, status_code=400)
+
+    if action == "nightvision":
+        value = payload.get("value") or "auto"
+        if value not in NIGHTVISION_MODES:
+            return JSONResponse({"error": "invalid nightvision mode"}, status_code=400)
+    else:
+        value = "on"
+
+    sid = db.add_schedule(
+        camera_id=camera_id, action=action, days=days,
+        start_min=start_min, end_min=end_min, value=value,
+    )
+    return JSONResponse(_schedule_dict(db.one(
+        "SELECT * FROM schedules WHERE id = ?", (sid,)
+    )))
+
+
+@app.patch("/api/cameras/{camera_id}/schedules/{sid}")
+async def api_update_schedule(camera_id: str, sid: int, request: Request):
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["camera_id"] != camera_id:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    if "enabled" not in payload:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.set_schedule_enabled(sid, bool(payload["enabled"]))
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/cameras/{camera_id}/schedules/{sid}")
+def api_delete_schedule(camera_id: str, sid: int):
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["camera_id"] != camera_id:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_schedule(sid)
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------
