@@ -74,9 +74,10 @@
         <section class="cam-section">
           <div class="cam-section-label">Camera</div>
           <div class="cam-row">
-            <label class="switch" title="Take the camera online or offline (offline stops streaming and recording)">
+            <label class="switch" title="Take the camera online or offline. Offline stops streaming and recording until you switch it back on.">
               <input type="checkbox" data-enabled-toggle {{ 'checked' if camera.enabled }}>
-              <span>Online</span>
+              <span class="switch-track"><span class="switch-knob"></span></span>
+              <span class="switch-state"></span>
             </label>
             <button class="icon-btn" data-rename title="Rename" aria-label="Rename camera">
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
