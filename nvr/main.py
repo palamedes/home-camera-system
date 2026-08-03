@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import (
     auth, camera_control, config as config_module, discovery, playback, proxy,
-    streams,
+    streamprobe, streams,
 )
 from .db import Database
 from .recorder import RecordingService
@@ -694,6 +694,67 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     go2rtc.reload()
     recording.sync()
     return JSONResponse({"ok": True, "purged": purge})
+
+
+@app.get("/api/cameras/{camera_id}/streams")
+def api_camera_streams(request: Request, camera_id: str):
+    """Actual resolution/bitrate of a camera's main and sub streams, plus any
+    settable encoder options. Called async by the settings page to label the
+    record-stream selector; a probe that fails just returns nulls."""
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(streamprobe.describe_streams(dict(camera), cfg))
+
+
+@app.post("/api/cameras/{camera_id}/encoder")
+async def api_set_encoder(camera_id: str, request: Request):
+    """Change a Reolink camera's encoder resolution/bitrate for one stream.
+
+    Admin-gated centrally (POST under /api/cameras). Degrades with a clear error
+    on non-Reolink cameras or when the device rejects the change; never crashes.
+    """
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if (camera["brand"] or "").lower() != "reolink":
+        return JSONResponse(
+            {"error": "Encoder control is only supported on Reolink cameras."},
+            status_code=400,
+        )
+    payload = await request.json()
+    stream = payload.get("stream")
+    if stream not in ("main", "sub"):
+        return JSONResponse(
+            {"error": "stream must be 'main' or 'sub'"}, status_code=400
+        )
+    resolution = payload.get("resolution")
+    bitrate = payload.get("bitrate")
+    if resolution in (None, "") and bitrate in (None, ""):
+        return JSONResponse({"error": "nothing to change"}, status_code=400)
+
+    from . import reolink
+
+    try:
+        with reolink.ReolinkClient(
+            camera["host"], camera["username"] or "", camera["password"] or ""
+        ) as client:
+            client.set_encoding(
+                stream,
+                size=resolution or None,
+                bitrate=int(bitrate) if bitrate else None,
+            )
+            client.logout()
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"Camera rejected the change: {exc}"}, status_code=502
+        )
+
+    # The encoder's output just changed shape; bounce the recorder for this
+    # camera so a fresh segment starts on the new resolution rather than a
+    # -c copy stream whose dimensions changed mid-file.
+    recording.restart(camera_id)
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------

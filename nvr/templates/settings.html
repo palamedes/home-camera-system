@@ -89,6 +89,14 @@
           {% endif %}
         </select>
       </div>
+      <div class="setting" data-streams{% if camera.brand %} data-brand="{{ camera.brand }}"{% endif %}>
+        <label for="strm-{{ camera.id }}">Record stream</label>
+        <select id="strm-{{ camera.id }}" data-record-stream class="rec-select">
+          <option value="main" {{ 'selected' if camera.record_stream != 'sub' }}>Main</option>
+          <option value="sub" {{ 'selected' if camera.record_stream == 'sub' }}{{ ' disabled' if not camera.sub_url }}>Sub</option>
+        </select>
+        <div class="stream-meta small muted" data-encoder></div>
+      </div>
       <div class="checkbox">
         <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye"
                {{ 'checked' if camera.fisheye }}>
@@ -213,6 +221,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ asset('streams.js') }}"></script>
 <script>
 // A deliberate "double clutch" for every destructive action: you must type the
 // exact name to confirm a removal.

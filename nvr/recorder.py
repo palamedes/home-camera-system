@@ -257,6 +257,18 @@ class RecordingService:
                 existing.stop()
                 self.recorders[camera_id] = CameraRecorder(dict(camera), self.config)
 
+    def restart(self, camera_id: str) -> None:
+        """Drop a camera's recorder so the supervisor rebuilds it fresh.
+
+        Used after a camera-side encoder change: the stream's resolution shifted
+        under a -c copy process, and the clean fix is a new ffmpeg on a new
+        segment. The next supervisor tick re-creates the recorder from the
+        current camera row.
+        """
+        recorder = self.recorders.pop(camera_id, None)
+        if recorder is not None:
+            recorder.stop()
+
     def _supervise(self) -> None:
         while not self._stop.is_set():
             try:
