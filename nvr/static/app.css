@@ -540,6 +540,14 @@ a.title:hover { color: var(--accent); }
 }
 .toolbar .spacer { flex: 1; }
 
+/* Device controls (spotlight / night vision): a compact cluster in the toolbar. */
+.cam-controls { display: flex; align-items: center; gap: 10px; flex: none; }
+.cam-controls .nv-group { display: flex; align-items: center; gap: 8px; }
+.cam-controls .rec-select { margin: 0; }
+.cam-controls #light-btn[aria-pressed="true"] { color: #fff; }
+#cam-controls-status { min-width: 0; }
+#cam-controls-status.is-error { color: #fca5a5; }
+
 /* Instant-replay scrubber: fills the space between Fullscreen and the mode label. */
 .replay { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 120px; }
 .replay-label {

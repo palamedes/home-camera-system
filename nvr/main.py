@@ -18,7 +18,10 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config as config_module, discovery, playback, proxy, streams
+from . import (
+    auth, camera_control, config as config_module, discovery, playback, proxy,
+    streams,
+)
 from .db import Database
 from .recorder import RecordingService
 from .retention import RetentionService
@@ -772,6 +775,57 @@ def api_delete_virtual(vid: int):
     if not db.virtual_camera(vid):
         return JSONResponse({"error": "not found"}, status_code=404)
     db.delete_virtual_camera(vid)
+    return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# API — device control (spotlight / night vision)
+# ---------------------------------------------------------------------------
+#
+# GET .../controls is read-only and fine for any viewer who can see the camera.
+# The POST mutations sit under /api/cameras/{id}/... so AuthMiddleware
+# auto-forbids non-admins (POST under /api/cameras is admin-only).
+
+
+@app.get("/api/cameras/{camera_id}/controls")
+def api_camera_controls(request: Request, camera_id: str):
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(camera_control.get_controls(camera))
+
+
+@app.post("/api/cameras/{camera_id}/light")
+async def api_camera_light(camera_id: str, request: Request):
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    if "on" not in payload:
+        return JSONResponse({"error": "'on' is required"}, status_code=400)
+    try:
+        camera_control.set_light(camera, bool(payload["on"]))
+    except camera_control.CameraControlError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/cameras/{camera_id}/nightvision")
+async def api_camera_nightvision(camera_id: str, request: Request):
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    mode = payload.get("mode")
+    ir = payload.get("ir")
+    if mode is None and ir is None:
+        return JSONResponse(
+            {"error": "at least one of 'mode' or 'ir' is required"}, status_code=400
+        )
+    try:
+        camera_control.set_night_vision(camera, mode=mode, ir=ir)
+    except camera_control.CameraControlError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"ok": True})
 
 

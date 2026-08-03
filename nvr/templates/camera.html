@@ -44,6 +44,24 @@
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
+  {% if is_admin %}
+  <div class="cam-controls" id="cam-controls" data-camera-id="{{ camera.id }}" hidden>
+    <button class="btn" id="light-btn" aria-pressed="false" hidden>💡 Light</button>
+    <div class="nv-group" id="nv-group" hidden>
+      <div class="segmented" id="nv-mode" role="group" aria-label="Day / night colour mode">
+        <button type="button" data-mode="auto">Auto</button>
+        <button type="button" data-mode="color">Colour</button>
+        <button type="button" data-mode="bw">B&amp;W</button>
+      </div>
+      <select id="nv-ir" class="rec-select" aria-label="IR lights" title="Infrared lights">
+        <option value="auto">IR: Auto</option>
+        <option value="on">IR: On</option>
+        <option value="off">IR: Off</option>
+      </select>
+    </div>
+    <span class="muted small" id="cam-controls-status" role="status" aria-live="polite"></span>
+  </div>
+  {% endif %}
   <div class="replay" id="replay" title="Drag left to rewind the last few minutes">
     <span class="replay-label" id="replay-label">LIVE</span>
     <input type="range" id="replay-scrub" min="0" max="180" value="180" step="1"
@@ -121,6 +139,7 @@
 {% block scripts %}
 <script src="{{ asset('live.js') }}"></script>
 <script src="{{ asset('replay.js') }}"></script>
+{% if is_admin %}<script src="{{ asset('cameracontrols.js') }}"></script>{% endif %}
 {% if camera.fisheye %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 document.querySelectorAll('#oldest, #newest').forEach(el => {
