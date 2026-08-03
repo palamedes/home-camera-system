@@ -149,7 +149,7 @@
               {{ '%02d:%02d' % (s.start_min // 60, s.start_min % 60) }}–{{ '%02d:%02d' % (s.end_min // 60, s.end_min % 60) }}
             </span>
             <span class="sched-days">
-              {% for i in range(7) %}<span class="{{ 'on' if s.days & (2 ** i) else 'off' }}">{{ daynames[i] }}</span>{% endfor %}
+              {% for i in range(7) %}<span class="{{ 'on' if (s.days // (2 ** i)) % 2 else 'off' }}">{{ daynames[i] }}</span>{% endfor %}
             </span>
             {% if s.action == 'nightvision' %}<span class="muted small">{{ s.value }}</span>{% endif %}
             <label class="checkbox sched-enabled">
