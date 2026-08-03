@@ -23,10 +23,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import urlparse
+
 import httpx
 import yaml
 
 log = logging.getLogger("nvr.streams")
+
+# How long a camera reachability probe result is trusted before re-checking.
+REACH_TTL_SECONDS = 15.0
 
 # Health-check tuning for a go2rtc that's alive but not actually serving (it
 # started while its ports were still held and bound nothing). Give a fresh
@@ -73,6 +78,32 @@ def talk_stream_name(camera_id: str) -> str:
     return f"{camera_id}_talk"
 
 
+def _rtsp_endpoint(camera: Any) -> tuple[str | None, int]:
+    """Host and RTSP port to probe for reachability.
+
+    Prefer the host/port embedded in the stream URL (that is the address go2rtc
+    actually dials); fall back to the camera's stored host on the default RTSP
+    port. The stored `port` column is the HTTP/ONVIF port, not RTSP, so it is
+    not used here.
+    """
+    for key in ("main_url", "sub_url"):
+        url = camera[key] if key in camera.keys() else None
+        if url:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                return parsed.hostname, parsed.port or 554
+    host = camera["host"] if "host" in camera.keys() else None
+    return host, 554
+
+
+def _tcp_reachable(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _lan_ip() -> str | None:
     """Best-guess LAN address, used as a WebRTC ICE candidate."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -94,6 +125,12 @@ class Go2rtcManager:
         self._last_config: str | None = None
         self._spawned_at: float = 0.0
         self._health_failures = 0
+        # camera_id -> (expiry_monotonic, reachable). go2rtc pulls cameras on
+        # demand, so a camera nobody is watching or recording has no bytes
+        # flowing and looks "offline" by stream stats alone — even though it is
+        # perfectly reachable. This caches a cheap TCP probe to tell the two
+        # apart without hammering the camera on every page render.
+        self._reach_cache: dict[str, tuple[float, bool]] = {}
 
     # ---- config ----------------------------------------------------------
 
@@ -291,6 +328,25 @@ class Go2rtcManager:
     def is_online(self, camera_id: str) -> bool:
         """Whether go2rtc currently has a live producer for the main stream."""
         return stream_online(self.stream_status().get(main_stream_name(camera_id)))
+
+    def camera_reachable(self, camera: Any) -> bool:
+        """Whether the camera answers a TCP connection on its RTSP port.
+
+        A liveness signal independent of whether anything is currently pulling
+        the stream — so a reachable camera that simply isn't being recorded or
+        watched reads as online rather than offline. Cached per camera for
+        REACH_TTL_SECONDS so repeated page renders don't re-probe.
+        """
+        cid = camera["id"]
+        now = time.monotonic()
+        cached = self._reach_cache.get(cid)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        host, port = _rtsp_endpoint(camera)
+        ok = _tcp_reachable(host, port) if host else False
+        self._reach_cache[cid] = (now + REACH_TTL_SECONDS, ok)
+        return ok
 
     def snapshot(self, camera_id: str, prefer_sub: bool = True) -> bytes | None:
         """Single JPEG frame, for camera tiles.

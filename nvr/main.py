@@ -365,6 +365,17 @@ def can_view(request: Request, camera: Any) -> bool:
     return bool(camera["viewer_visible"])
 
 
+def _online(camera: Any, info: Any) -> bool:
+    """A camera is online if it is streaming now OR simply reachable.
+
+    go2rtc pulls cameras on demand, so one that is neither being recorded nor
+    watched has no bytes flowing — that is idle, not offline. Fall back to a
+    cheap (cached) TCP reachability probe so "not recording" never reads as
+    "offline".
+    """
+    return streams.stream_online(info) or go2rtc.camera_reachable(camera)
+
+
 def camera_view_models(request: Request) -> list[dict[str, Any]]:
     """Camera rows decorated with live status, for the dashboard and grid.
 
@@ -375,7 +386,7 @@ def camera_view_models(request: Request) -> list[dict[str, Any]]:
     recorder_status = recording.status()
     for camera in cameras:
         info = status.get(streams.main_stream_name(camera["id"]))
-        camera["online"] = streams.stream_online(info)
+        camera["online"] = _online(camera, info)
         camera["recorder"] = recorder_status.get(camera["id"], {})
         camera["stats"] = db.camera_stats(camera["id"])
     return cameras
@@ -413,7 +424,7 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "view": {"yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"]},
             "calib": calib,
             "viewer_visible": bool(v["viewer_visible"]),
-            "online": streams.stream_online(info),
+            "online": _online(parent, info),
         })
     return result
 
@@ -558,7 +569,7 @@ def api_cameras(request: Request):
             camera.pop(field, None)
         camera["has_sub"] = bool(row["sub_url"])
         info = status.get(streams.main_stream_name(camera["id"]))
-        camera["online"] = streams.stream_online(info)
+        camera["online"] = _online(row, info)
         camera["stats"] = db.camera_stats(camera["id"])
         result.append(camera)
     return JSONResponse(result)

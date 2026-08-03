@@ -50,6 +50,9 @@ def app_module():
     from nvr import main  # noqa: WPS433 — deliberately late, after env is set
     main.go2rtc.reload = lambda *a, **k: None
     main.go2rtc.start = lambda *a, **k: None
+    # The reachability probe opens a real TCP socket to the camera; stub it so
+    # page renders don't block on connect timeouts to fake test hosts.
+    main.go2rtc.camera_reachable = lambda *a, **k: True
     main.recording.sync = lambda *a, **k: None
     main.recording.start = lambda *a, **k: None
     return main
