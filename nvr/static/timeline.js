@@ -28,6 +28,13 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   let windowEnd = bounds.end;
   let windowSpan = parseInt(spanSelect.value, 10);
   let ranges = [];
+  let events = [];
+
+  // Marker colour by detection kind.
+  const EVENT_COLORS = {
+    person: '#ef4444', vehicle: '#3b82f6', animal: '#22c55e',
+    motion: '#f59e0b', flood: '#06b6d4', _default: '#a855f7',
+  };
   let chunkStart = null;      // epoch seconds of the loaded chunk
   let hoverX = null;
   let selection = null;       // { start, end } epoch seconds, for export
@@ -103,6 +110,29 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       ctx.fillRect(x0, 6, Math.max(1, x1 - x0), h - 24);
     }
 
+    // Event markers: a downward pip at the top plus a faint full-height line,
+    // coloured by kind. Drawn before the playhead so the playhead stays on top.
+    for (const ev of events) {
+      const x = timeToX(ev.ts);
+      if (x < -4 || x > w + 4) continue;
+      const color = EVENT_COLORS[ev.type] || EVENT_COLORS._default;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, 8);
+      ctx.lineTo(Math.round(x) + 0.5, h - 16);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, 0);
+      ctx.lineTo(x + 4, 0);
+      ctx.lineTo(x, 7);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     // Playhead.
     if (chunkStart !== null) {
       const now = chunkStart + (video.currentTime || 0);
@@ -158,6 +188,7 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       if (!response.ok) return;
       const data = await response.json();
       ranges = data.ranges || [];
+      events = data.events || [];
       if (data.bounds) bounds = data.bounds;
       draw();
     } catch (error) {
@@ -167,6 +198,17 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
 
   function hasFootageAt(ts) {
     return ranges.some(r => ts >= r.start && ts < r.end);
+  }
+
+  // Nearest event marker to a canvas x, within a few px — for hover labels and
+  // click-to-jump.
+  function eventAtX(x) {
+    let best = null, bestDx = 7;
+    for (const ev of events) {
+      const dx = Math.abs(timeToX(ev.ts) - x);
+      if (dx < bestDx) { bestDx = dx; best = ev; }
+    }
+    return best;
   }
 
   // ---- playback ---------------------------------------------------------
@@ -262,9 +304,13 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   canvas.addEventListener('pointermove', event => {
     const x = localX(event);
     hoverX = x;
-    canvas.title = fmtTime(xToTime(x));
+    const hoverEv = eventAtX(x);
+    canvas.title = hoverEv
+      ? `${hoverEv.label || hoverEv.type} — ${fmtTime(hoverEv.ts)}`
+      : fmtTime(xToTime(x));
     canvas.style.cursor =
-      (press && press.scrub) || event.ctrlKey || event.metaKey ? 'ew-resize' : 'pointer';
+      (press && press.scrub) || event.ctrlKey || event.metaKey ? 'ew-resize'
+        : hoverEv ? 'pointer' : 'pointer';
     if (press) {
       if (Math.abs(x - press.x) > DRAG_THRESHOLD) press.dragging = true;
       if (press.scrub) scrubTo(xToTime(x));
@@ -284,7 +330,10 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       selection = { start: a, end: b };
       showSelection();
     } else {
-      playFrom(Math.floor(press.time));               // a plain click seeks
+      // A plain click seeks — but clicking on an event marker jumps to a couple
+      // of seconds before that event so you catch the lead-up.
+      const ev = eventAtX(localX(event));
+      playFrom(Math.floor(ev ? ev.ts - 2 : press.time));
     }
     press = null;
     draw();

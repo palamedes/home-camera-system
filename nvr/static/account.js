@@ -35,6 +35,33 @@
     if (event.key === 'Escape' && isOpen()) closeMenu();
   });
 
+  // ---- theme toggle (light / dark) -------------------------------------
+  // The saved theme is already applied pre-paint by the inline script in
+  // base.html; here we just keep the label in sync and let the user flip it.
+
+  const themeItem = document.getElementById('theme-item');
+  if (themeItem) {
+    const label = themeItem.querySelector('[data-theme-label]');
+    const root = document.documentElement;
+
+    function syncTheme() {
+      const dark = (root.dataset.theme || 'dark') !== 'light';
+      // The label names the action, not the current state.
+      if (label) label.textContent = dark ? 'Light mode' : 'Dark mode';
+      themeItem.setAttribute('aria-pressed', String(!dark));
+    }
+
+    themeItem.addEventListener('click', () => {
+      const next = (root.dataset.theme || 'dark') === 'light' ? 'dark' : 'light';
+      root.dataset.theme = next;
+      try { localStorage.setItem('sentry-theme', next); } catch (e) {}
+      syncTheme();
+      closeMenu();
+    });
+
+    syncTheme();
+  }
+
   // ---- change-password modal -------------------------------------------
 
   const modal = document.getElementById('password-modal');

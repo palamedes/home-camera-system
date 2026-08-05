@@ -140,6 +140,31 @@ CREATE TABLE IF NOT EXISTS schedules (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_schedules_camera ON schedules(camera_id);
+
+CREATE TABLE IF NOT EXISTS events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Camera the event belongs to, or a synthetic id like 'river' for
+    -- non-camera sources (flood alerts). NULL is allowed for the same reason.
+    camera_id  TEXT,
+    ts         REAL    NOT NULL,
+    -- 'person' | 'vehicle' | 'animal' | 'motion' | 'flood' ...
+    type       TEXT    NOT NULL,
+    label      TEXT    NOT NULL DEFAULT '',
+    score      REAL,
+    -- Free-form JSON for source-specific detail (stage in ft, category, ...).
+    meta       TEXT    NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_camera_ts ON events(camera_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+
+-- App-level settings the UI can edit at runtime (weather, alerts, ...), stored
+-- one JSON blob per section. These override the matching config.yaml section on
+-- startup; infrastructure settings (server, go2rtc, paths) stay in the file.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -354,6 +379,9 @@ class Database:
     def delete_clip(self, clip_id: int) -> None:
         self.execute("DELETE FROM clips WHERE id = ?", (clip_id,))
 
+    def update_clip_path(self, clip_id: int, path: str) -> None:
+        self.execute("UPDATE clips SET path = ? WHERE id = ?", (path, clip_id))
+
     # ---- schedules -------------------------------------------------------
 
     def schedules(self) -> list[sqlite3.Row]:
@@ -439,6 +467,75 @@ class Database:
         return self.query(
             "SELECT * FROM segments ORDER BY start_ts LIMIT ?", (limit,)
         )
+
+    def all_segments(self) -> list[sqlite3.Row]:
+        return self.query("SELECT id, camera_id, path, size FROM segments")
+
+    def recorded_bytes_under(self, prefix: str) -> int:
+        """Total recorded bytes whose path is under `prefix` — i.e. the space one
+        storage volume is using."""
+        row = self.one(
+            "SELECT COALESCE(SUM(size), 0) AS n FROM segments WHERE path LIKE ?",
+            (prefix + "%",),
+        )
+        return int(row["n"]) if row else 0
+
+    def oldest_segments_under(self, prefix: str, limit: int = 500) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM segments WHERE path LIKE ? ORDER BY start_ts LIMIT ?",
+            (prefix + "%", limit),
+        )
+
+    def update_segment_path(self, segment_id: int, path: str) -> None:
+        self.execute("UPDATE segments SET path = ? WHERE id = ?", (path, segment_id))
+
+    # ---- events ----------------------------------------------------------
+
+    def add_event(
+        self, camera_id: str | None, ts: float, type: str,
+        label: str = "", score: float | None = None,
+        meta: str = "{}",
+    ) -> int:
+        cur = self.execute(
+            "INSERT INTO events (camera_id, ts, type, label, score, meta, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (camera_id, ts, type, label, score, meta, int(time.time())),
+        )
+        return int(cur.lastrowid or 0)
+
+    def events_in_range(
+        self, camera_id: str, start: float, end: float, limit: int = 500
+    ) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM events WHERE camera_id = ? AND ts >= ? AND ts < ? "
+            "ORDER BY ts LIMIT ?",
+            (camera_id, start, end, limit),
+        )
+
+    def recent_events(self, limit: int = 50) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,)
+        )
+
+    def prune_events_older_than(self, cutoff: float) -> int:
+        cur = self.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+        return int(cur.rowcount or 0)
+
+    # ---- app settings ----------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.one("SELECT value FROM app_settings WHERE key = ?", (key,))
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    def all_settings(self) -> dict[str, str]:
+        return {r["key"]: r["value"] for r in self.query("SELECT key, value FROM app_settings")}
 
     def segments_older_than(self, cutoff: float, limit: int = 500) -> list[sqlite3.Row]:
         return self.query(

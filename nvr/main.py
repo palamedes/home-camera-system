@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
 import time
+
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -19,13 +22,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import (
-    auth, camera_control, config as config_module, discovery, playback, proxy,
-    streamprobe, streams,
+    appsettings, auth, camera_control, config as config_module, discovery,
+    playback, proxy, streamprobe, streams,
 )
 from .db import Database
+from .alerts import AlertService
+from .events import EventService
 from .recorder import RecordingService
 from .retention import RetentionService
 from .scheduler import SchedulerService
+from .storage_migrate import StorageMigrator
+from .weather import WeatherService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,10 +44,17 @@ HERE = Path(__file__).resolve().parent
 
 cfg = config_module.load()
 db = Database(cfg.db_path)
+# Replay any in-app settings edits over the config.yaml defaults before the
+# services (which hold references to cfg.weather/cfg.alerts) are constructed.
+appsettings.load_overrides(cfg, db)
 go2rtc = streams.Go2rtcManager(cfg, db)
 recording = RecordingService(cfg, db, go2rtc)
 retention = RetentionService(cfg, db)
 scheduler = SchedulerService(cfg, db, recording)
+alerts = AlertService(cfg, db)
+weather = WeatherService(cfg, alerts)
+events = EventService(cfg, db, alerts)
+migrator = StorageMigrator(cfg, db)
 
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 templates.env.filters["human_size"] = config_module.human_size
@@ -75,10 +89,14 @@ async def lifespan(_app: FastAPI):
     recording.start()
     scheduler.start()
     retention.start()
+    weather.start()
+    events.start()
     log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
     try:
         yield
     finally:
+        events.stop()
+        weather.stop()
         retention.stop()
         scheduler.stop()
         recording.stop()
@@ -446,6 +464,7 @@ def dashboard(request: Request):
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
         storage=retention.estimate(),
+        weather_enabled=cfg.weather.enabled,
     )
 
 
@@ -456,6 +475,8 @@ def cameras_page(request: Request):
         request, "cameras.html",
         cameras=[c for c in cameras if c["show_on_grid"]],
         total=len(cameras),
+        online=sum(1 for c in cameras if c["online"]),
+        recording_count=sum(1 for c in cameras if c["record"]),
         virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
         storage=retention.estimate(),
     )
@@ -720,7 +741,9 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     if purge:
         import shutil
 
-        shutil.rmtree(cfg.storage.recordings_dir / camera_id, ignore_errors=True)
+        # Footage may be spread across every pool volume.
+        for base in cfg.storage.volume_paths():
+            shutil.rmtree(base / camera_id, ignore_errors=True)
     db.delete_camera(camera_id)
     go2rtc.reload()
     recording.sync()
@@ -1050,6 +1073,7 @@ def api_timeline(request: Request, camera_id: str, start: float, end: float):
         "end": end,
         "ranges": [r.to_dict() for r in ranges],
         "bounds": {"start": bounds[0], "end": bounds[1]} if bounds else None,
+        "events": [_event_dict(e) for e in db.events_in_range(camera_id, start, end)],
     })
 
 
@@ -1115,6 +1139,259 @@ def api_status():
             for name, info in go2rtc.stream_status().items()
         },
         "go2rtc_running": go2rtc.process is not None and go2rtc.process.poll() is None,
+    })
+
+
+@app.get("/api/weather")
+def api_weather():
+    """Cached weather + river level for the dashboard card. Served from memory,
+    refreshed on a background timer, so this never blocks on the network."""
+    return JSONResponse(weather.snapshot())
+
+
+# ---------------------------------------------------------------------------
+# API — events & alerts
+# ---------------------------------------------------------------------------
+
+def _event_dict(row: Any) -> dict[str, Any]:
+    meta = row["meta"]
+    try:
+        meta = json.loads(meta) if isinstance(meta, str) else (meta or {})
+    except (ValueError, TypeError):
+        meta = {}
+    return {
+        "id": row["id"],
+        "camera_id": row["camera_id"],
+        "ts": row["ts"],
+        "type": row["type"],
+        "label": row["label"],
+        "score": row["score"],
+        "meta": meta,
+    }
+
+
+@app.get("/api/events")
+def api_events(request: Request, limit: int = 50):
+    """Recent events, filtered to what the requester may see. Non-camera events
+    (e.g. river-level alerts) are visible to everyone logged in."""
+    out = []
+    for e in db.recent_events(limit=min(max(limit, 1), 500)):
+        cid = e["camera_id"]
+        if cid:
+            cam = db.camera(cid)
+            if not cam or not can_view(request, cam):
+                continue
+        out.append(_event_dict(e))
+    return JSONResponse({"events": out})
+
+
+@app.post("/api/alerts/test")
+def api_alerts_test(request: Request):
+    """Fire a one-off test alert to the configured webhook (admin only)."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    try:
+        sent = alerts.test()
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"sent": bool(sent)})
+
+
+# ---------------------------------------------------------------------------
+# API — app settings (weather / alerts), editable from the settings page
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings")
+def api_settings(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(appsettings.current(cfg))
+
+
+@app.patch("/api/settings/weather")
+async def api_settings_weather(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        applied = appsettings.update_section(cfg, db, "weather", body)
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Reflect the change immediately: re-fetch off-thread so the card updates
+    # without blocking this request on the weather APIs.
+    threading.Thread(target=weather.refresh, name="weather-refresh", daemon=True).start()
+    return JSONResponse({"applied": applied, "settings": appsettings.current(cfg)})
+
+
+@app.patch("/api/settings/alerts")
+async def api_settings_alerts(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        applied = appsettings.update_section(cfg, db, "alerts", body)
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Start/stop the AI poller to match the new enabled/detect state.
+    events.apply()
+    return JSONResponse({"applied": applied, "settings": appsettings.current(cfg)})
+
+
+@app.get("/api/settings/geocode")
+def api_settings_geocode(request: Request, q: str = ""):
+    """Look up coordinates for a place name (Open-Meteo geocoding), so the
+    weather location can be set by search instead of typing lat/lon."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    q = (q or "").strip()
+    if len(q) < 2:
+        return JSONResponse({"results": []})
+    try:
+        resp = httpx.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": q, "count": 6, "language": "en", "format": "json"},
+            timeout=6.0,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("results") or []
+    except (httpx.HTTPError, ValueError):
+        return JSONResponse({"results": []})
+    results = [
+        {
+            "label": ", ".join(
+                p for p in (r.get("name"), r.get("admin1"), r.get("country_code")) if p
+            ),
+            "latitude": r.get("latitude"),
+            "longitude": r.get("longitude"),
+        }
+        for r in raw
+        if r.get("latitude") is not None and r.get("longitude") is not None
+    ]
+    return JSONResponse({"results": results})
+
+
+# ---------------------------------------------------------------------------
+# API — storage location (relocate recordings/clips, e.g. onto a NAS)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/storage")
+def api_storage(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({
+        "current": appsettings.storage_current(cfg),
+        "migrate": migrator.status(),
+    })
+
+
+@app.post("/api/settings/storage/check")
+async def api_storage_check(request: Request):
+    """Dry-run: validate candidate paths and report free space, without applying."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    return JSONResponse({"checks": appsettings.check_storage(body)})
+
+
+@app.post("/api/settings/storage")
+async def api_storage_apply(request: Request):
+    """Relocate the recordings/clips roots. New footage writes to the new
+    location immediately; existing footage stays put (migrate it separately)."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        applied = appsettings.apply_storage(cfg, db, body)
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Rebuild recorders so their ffmpeg writes into the new directory. The
+    # supervisor recreates each from current config on its next tick (~5s).
+    if "recordings_dir" in applied:
+        for cam_id in list(recording.recorders.keys()):
+            recording.restart(cam_id)
+    return JSONResponse({
+        "applied": applied,
+        "current": appsettings.storage_current(cfg),
+    })
+
+
+@app.post("/api/settings/storage/migrate")
+def api_storage_migrate(request: Request):
+    """Kick off moving existing footage into the current storage location."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    started = migrator.start()
+    return JSONResponse({"started": started, "migrate": migrator.status()})
+
+
+@app.get("/api/settings/storage/migrate")
+def api_storage_migrate_status(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse(migrator.status())
+
+
+@app.get("/api/settings/volumes")
+def api_volumes(request: Request):
+    """The recordings pool with live per-volume usage (path, cap, used, free)."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({"volumes": retention.estimate()["volumes"]})
+
+
+@app.post("/api/settings/volumes")
+async def api_volumes_apply(request: Request):
+    """Set the ordered recordings pool. New footage begins landing on the first
+    volume with room on the next supervisor tick."""
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        appsettings.apply_volumes(cfg, db, body.get("volumes"))
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Rebuild recorders so volume selection re-evaluates immediately (otherwise
+    # they'd keep writing to the old volume until the next natural rebuild).
+    for cam_id in list(recording.recorders.keys()):
+        recording.restart(cam_id)
+    return JSONResponse({"volumes": retention.estimate()["volumes"]})
+
+
+@app.patch("/api/settings/storage_limits")
+async def api_settings_storage_limits(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        applied, restarts = appsettings.update_advanced(cfg, db, "storage_limits", body)
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # A segment-length change takes effect by rebuilding each recorder's ffmpeg.
+    if "recorder" in restarts:
+        for cam_id in list(recording.recorders.keys()):
+            recording.restart(cam_id)
+    return JSONResponse({
+        "applied": applied,
+        "restart_required": [r for r in restarts if r == "app"],
+        "settings": appsettings.current(cfg),
+    })
+
+
+@app.patch("/api/settings/network")
+async def api_settings_network(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    try:
+        applied, restarts = appsettings.update_advanced(cfg, db, "network", body)
+    except appsettings.SettingError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    # Live fields (discovery, playback, sessions) are already in effect. Host,
+    # port, and go2rtc ports can only rebind on a full restart.
+    return JSONResponse({
+        "applied": applied,
+        "restart_required": [r for r in restarts if r == "app"],
+        "settings": appsettings.current(cfg),
     })
 
 

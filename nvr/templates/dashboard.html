@@ -2,52 +2,51 @@
 {% block title %}Dashboard — Sentry{% endblock %}
 {% block content %}
 
-<div class="stats" style="margin-bottom: 24px;">
-  <div class="stat">
-    <div class="k">Cameras</div>
-    <div class="v">{{ online }} / {{ total }}</div>
-    <div class="n">{{ 'online' if total else 'none configured' }}</div>
+{% if weather_enabled %}
+<section class="card card-full weather-card" data-weather hidden>
+  <div class="card-head">
+    <h2>Weather &amp; water <span class="wx-loc" data-wx-loc></span></h2>
+    <span class="card-action muted small" data-wx-updated></span>
   </div>
-  <div class="stat">
-    <div class="k">Recording</div>
-    <div class="v">{{ recording_count }}</div>
-    <div class="n">continuous</div>
-  </div>
-  <div class="stat">
-    <div class="k">Stored</div>
-    <div class="v">{{ storage.used_bytes | human_size }}</div>
-    <div class="n">of {{ storage.quota_bytes | human_size }}</div>
-    {% set pct = (storage.used_bytes / storage.quota_bytes * 100) if storage.quota_bytes else 0 %}
-    <div class="bar {{ 'crit' if pct > 92 else 'hot' if pct > 75 else '' }}">
-      <span style="width: {{ [pct, 100] | min }}%"></span>
+  <div class="card-body">
+    <div class="wx-grid">
+      <div class="wx-now">
+        <div class="wx-icon" data-wx-icon>—</div>
+        <div>
+          <div class="wx-temp" data-wx-temp>—</div>
+          <div class="wx-cond muted" data-wx-cond></div>
+          <div class="wx-hilo muted small" data-wx-hilo></div>
+        </div>
+      </div>
+      <div class="wx-metrics" data-wx-metrics></div>
+      <div class="wx-water" data-wx-water hidden>
+        <div class="wx-water-head">
+          <span class="wx-water-label muted small" data-wx-water-label></span>
+          <span class="wx-flood" data-wx-flood></span>
+        </div>
+        <div class="wx-water-level">
+          <span class="wx-level" data-wx-level>—</span>
+          <span class="wx-trend" data-wx-trend></span>
+        </div>
+        <svg class="wx-spark" data-wx-spark viewBox="0 0 120 32" preserveAspectRatio="none" hidden>
+          <polyline data-wx-spark-line fill="none" stroke="currentColor" stroke-width="1.5"></polyline>
+        </svg>
+      </div>
     </div>
+    <div class="wx-error muted small" data-wx-error hidden></div>
   </div>
-  <div class="stat">
-    <div class="k">Retention</div>
-    <div class="v">
-      {% if storage.projected_days %}{{ '%.1f' % storage.projected_days }}d
-      {% else %}&mdash;{% endif %}
-    </div>
-    <div class="n">limit {{ storage.max_age_days }} days</div>
-  </div>
-  <div class="stat">
-    <div class="k">Disk</div>
-    <div class="v">{{ storage.disk_free | human_size }}</div>
-    <div class="n">free of {{ storage.disk_total | human_size }}</div>
-  </div>
-  <div class="stat">
-    <div class="k">Write rate</div>
-    <div class="v">{% if storage.bytes_per_day %}{{ storage.bytes_per_day | human_size }}{% else %}&mdash;{% endif %}</div>
-    <div class="n">per day &middot; last prune <span data-ts="{{ storage.last_run or '' }}">never</span></div>
-  </div>
-</div>
+</section>
+{% endif %}
 
 <div class="cards">
 
   <section class="card card-full">
     <div class="card-head">
       <h2>Cameras</h2>
-      <a href="/cameras" class="card-action">View all &rarr;</a>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        {% if grid or virtuals %}<a href="/wall" class="btn btn-sm">Wall view</a>{% endif %}
+        <a href="/cameras" class="card-action">View all &rarr;</a>
+      </div>
     </div>
     <div class="card-body">
       {% if grid or virtuals %}
@@ -107,16 +106,9 @@
 {% block scripts %}
 <script src="{{ asset('live.js') }}"></script>
 <script src="{{ asset('presence.js') }}"></script>
+{% if weather_enabled %}<script src="{{ asset('weather.js') }}"></script>{% endif %}
 {% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
-// "Last prune" timestamp in the storage strip.
-document.querySelectorAll('[data-ts]').forEach(el => {
-  const ts = parseFloat(el.dataset.ts);
-  if (ts) el.textContent = new Date(ts * 1000).toLocaleTimeString([], {
-    hour: 'numeric', minute: '2-digit',
-  });
-});
-
 // Live substream video in each preview tile, snapshot poster as fallback.
 initLiveTiles();
 

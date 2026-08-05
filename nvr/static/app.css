@@ -12,6 +12,28 @@
   --radius: 10px;
 }
 
+/* Light theme. The whole app is driven off the variables above, so switching
+   is mostly a palette swap; a few rules below fix spots tuned for a dark
+   surface (white-alpha hovers, and status text tints that go low-contrast on a
+   light tint). Set via the account menu; applied pre-paint in base.html. */
+:root[data-theme="light"] {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #eceff3;
+  --line: #d5dbe1;
+  --text: #1f2328;
+  --muted: #5b636d;
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+}
+:root[data-theme="light"] .cam-summary:hover { background: rgba(0, 0, 0, 0.03); }
+:root[data-theme="light"] .badge { color: #1d4ed8; }
+:root[data-theme="light"] .alert-error { color: #b91c1c; }
+:root[data-theme="light"] .alert-info { color: #1d4ed8; }
+:root[data-theme="light"] .alert-warn { color: #b45309; }
+
 * { box-sizing: border-box; }
 
 /* The `hidden` attribute must always win. Any element given its own display
@@ -910,3 +932,143 @@ a.title:hover { color: var(--accent); }
 .switch input:checked ~ .switch-state::after { content: 'Online'; color: var(--ok); }
 
 .cam-danger .cam-row { align-items: center; }
+
+/* ---- Dashboard weather + river-level card ------------------------------- */
+.weather-card { margin-bottom: 24px; }
+.weather-card .card-head h2 { display: flex; align-items: baseline; gap: 8px; }
+.wx-loc { font-size: 13px; font-weight: 500; color: var(--muted); }
+
+.wx-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) minmax(180px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 780px) { .wx-grid { grid-template-columns: 1fr; } }
+
+.wx-now { display: flex; align-items: center; gap: 14px; }
+.wx-icon { font-size: 44px; line-height: 1; }
+.wx-temp { font-size: 34px; font-weight: 700; line-height: 1.05; }
+.wx-cond { font-size: 14px; }
+.wx-hilo { margin-top: 2px; }
+
+.wx-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 18px;
+}
+.wx-metric {
+  display: flex; justify-content: space-between; gap: 10px;
+  padding: 3px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.wx-k { color: var(--muted); }
+.wx-v { font-variant-numeric: tabular-nums; }
+
+.wx-water {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.wx-water-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.wx-flood { font-size: 12px; color: var(--ok); font-weight: 600; }
+.wx-flood-alert { color: var(--warn); }
+.wx-water-level { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; }
+.wx-level { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wx-trend { font-size: 13px; color: var(--muted); }
+.wx-trend-rising { color: var(--warn); }
+.wx-trend-falling { color: var(--accent); }
+.wx-spark { width: 100%; height: 32px; margin-top: 8px; color: var(--accent); display: block; }
+
+.wx-error { margin-top: 12px; }
+
+/* ---- History event markers legend -------------------------------------- */
+.event-legend {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin-top: 8px;
+}
+.event-legend .spacer { flex: 1; }
+.ev-key { display: inline-flex; align-items: center; gap: 6px; }
+.ev-dot {
+  width: 9px; height: 9px; border-radius: 2px; display: inline-block;
+  transform: rotate(45deg);
+}
+
+/* ---- Settings: tabs + editable forms ----------------------------------- */
+.settings-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 22px;
+}
+.settings-tab {
+  padding: 9px 15px; border: none; background: transparent;
+  color: var(--muted); font: inherit; font-size: 14px; font-weight: 500;
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  border-radius: 7px 7px 0 0;
+}
+.settings-tab:hover { color: var(--text); background: var(--panel-2); }
+.settings-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 22px;
+}
+@media (max-width: 680px) { .settings-grid { grid-template-columns: 1fr; } }
+
+.set-field { display: flex; flex-direction: column; gap: 5px; }
+.set-field.set-span2 { grid-column: 1 / -1; }
+.set-field.set-inline {
+  flex-direction: row; align-items: center; justify-content: space-between; gap: 12px;
+}
+.set-label { font-size: 13px; color: var(--muted); font-weight: 500; }
+.set-hint { font-size: 12px; color: var(--muted); }
+.set-field input.rec-select,
+.set-field select.rec-select { width: 100%; }
+
+.chk-row { display: flex; gap: 16px; flex-wrap: wrap; padding-top: 2px; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+
+.geo-results {
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); overflow: hidden; margin-top: 4px;
+}
+.geo-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 11px; border: none; background: transparent;
+  color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+  border-bottom: 1px solid var(--line);
+}
+.geo-item:last-child { border-bottom: none; }
+.geo-item:hover:not(.muted) { background: var(--panel); }
+
+/* ---- Settings: per-field help icon ------------------------------------- */
+.set-label { display: inline-flex; align-items: center; gap: 4px; }
+.help-btn {
+  display: inline-grid; place-items: center;
+  width: 15px; height: 15px; padding: 0; margin-left: 2px;
+  border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--muted);
+  font-size: 10px; font-weight: 700; line-height: 1;
+  cursor: help; flex: none;
+}
+.help-btn:hover { color: var(--text); border-color: var(--accent); }
+.help-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- Settings: recordings pool (volumes editor) ------------------------ */
+.volume-list { display: flex; flex-direction: column; gap: 12px; }
+.volume-row {
+  display: grid;
+  grid-template-columns: auto 1fr 130px auto;
+  gap: 8px; align-items: center;
+}
+.volume-row .vol-usage { grid-column: 2 / -1; margin-top: -2px; }
+.vol-order { display: flex; flex-direction: column; gap: 2px; }
+.vol-order .btn { padding: 0 7px; line-height: 1.4; font-size: 11px; }
+.volume-row .vol-cap { text-align: center; }
+@media (max-width: 620px) {
+  .volume-row { grid-template-columns: auto 1fr auto; }
+  .volume-row .vol-cap { grid-column: 2; }
+  .volume-row .vol-usage { grid-column: 1 / -1; }
+}

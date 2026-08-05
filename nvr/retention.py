@@ -123,6 +123,12 @@ class RetentionService:
                 d, f = self._prune_older_than(orphan_id, now - global_hard)
                 deleted += d
                 freed += f
+            # Event markers are tiny, but there's no reason to keep them past
+            # the footage they annotate.
+            try:
+                self.db.prune_events_older_than(now - global_hard)
+            except Exception:
+                log.debug("event prune skipped", exc_info=True)
 
         # 3. Size quota — oldest-first, a backstop for when even the rolling
         #    windows add up to more than the disk budget.
@@ -147,20 +153,31 @@ class RetentionService:
                     continue
                 break
 
-        # 4. Free-space backstop — the hard floor that keeps the OS alive.
-        usage = shutil.disk_usage(self.config.storage.recordings_dir)
-        while usage.free < FREE_SPACE_FLOOR:
-            rows = self.db.oldest_segments(limit=BATCH)
-            if not rows:
-                log.error(
-                    "disk below %s free but no recordings left to prune",
-                    FREE_SPACE_FLOOR,
-                )
-                break
-            for row in rows:
-                freed += self._delete(row)
-                deleted += 1
-            usage = shutil.disk_usage(self.config.storage.recordings_dir)
+        # 4. Free-space backstop — the hard floor that keeps each filesystem
+        #    (and the OS, for the primary) alive. Applied per volume, pruning the
+        #    oldest footage that actually lives on the volume that's low.
+        for vol in self.config.storage.volumes:
+            if not vol.available():
+                continue
+            try:
+                usage = shutil.disk_usage(vol.path)
+            except OSError:
+                continue
+            while usage.free < FREE_SPACE_FLOOR:
+                rows = self.db.oldest_segments_under(str(vol.path), limit=BATCH)
+                if not rows:
+                    log.error(
+                        "%s below %s free but no recordings left to prune there",
+                        vol.path, FREE_SPACE_FLOOR,
+                    )
+                    break
+                for row in rows:
+                    freed += self._delete(row)
+                    deleted += 1
+                try:
+                    usage = shutil.disk_usage(vol.path)
+                except OSError:
+                    break
 
         self.prune_empty_directories()
         self.last_run = time.time()
@@ -185,22 +202,23 @@ class RetentionService:
         return deleted, freed
 
     def prune_empty_directories(self) -> None:
-        """Remove day folders left behind after their segments were deleted."""
-        root = self.config.storage.recordings_dir
-        if not root.exists():
-            return
-        for camera_dir in root.iterdir():
-            if not camera_dir.is_dir():
+        """Remove day folders left behind after their segments were deleted,
+        across every pool volume."""
+        for root in self.config.storage.volume_paths():
+            if not root.exists():
                 continue
-            for day_dir in camera_dir.iterdir():
-                if not day_dir.is_dir():
+            for camera_dir in root.iterdir():
+                if not camera_dir.is_dir():
                     continue
-                try:
-                    next(day_dir.iterdir())
-                except StopIteration:
-                    day_dir.rmdir()
-                except OSError:
-                    pass
+                for day_dir in camera_dir.iterdir():
+                    if not day_dir.is_dir():
+                        continue
+                    try:
+                        next(day_dir.iterdir())
+                    except StopIteration:
+                        day_dir.rmdir()
+                    except OSError:
+                        pass
 
     def estimate(self) -> dict[str, Any]:
         """Projected retention, for the storage panel in the UI.
@@ -208,12 +226,33 @@ class RetentionService:
         Rate is measured from what has actually been written rather than from
         the camera's configured bitrate, which cameras routinely overshoot.
         """
-        usage = shutil.disk_usage(self.config.storage.recordings_dir)
         total = self.db.total_size()
-        try:
-            quota = self.config.storage.max_bytes()
-        except (OSError, ValueError):
-            quota = 0
+        quota = self.config.storage.total_cap_bytes()
+
+        # Per-volume breakdown, plus pooled disk free/total across available
+        # volumes (distinct drives; two volumes on one filesystem double-count,
+        # which is a fine approximation for the storage panel).
+        volumes = []
+        disk_free = disk_total = 0
+        for vol in self.config.storage.volumes:
+            try:
+                usage = shutil.disk_usage(vol.path)
+                free, vtotal = usage.free, usage.total
+            except OSError:
+                free = vtotal = None
+            available = vol.available()
+            volumes.append({
+                "path": str(vol.path),
+                "cap": vol.cap,
+                "cap_bytes": vol.cap_bytes(),
+                "used": self.db.recorded_bytes_under(str(vol.path)),
+                "free": free,
+                "total": vtotal,
+                "available": available,
+            })
+            if available and free is not None:
+                disk_free += free
+                disk_total += vtotal
 
         span_seconds = 0.0
         for camera in self.db.cameras():
@@ -227,10 +266,11 @@ class RetentionService:
         return {
             "used_bytes": total,
             "quota_bytes": quota,
-            "disk_free": usage.free,
-            "disk_total": usage.total,
+            "disk_free": disk_free,
+            "disk_total": disk_total,
             "bytes_per_day": bytes_per_day,
             "projected_days": projected_days,
             "max_age_days": self.config.storage.max_age_days,
             "last_run": self.last_run,
+            "volumes": volumes,
         }

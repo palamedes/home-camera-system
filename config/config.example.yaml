@@ -3,6 +3,12 @@
 # Copy to config/config.yaml and edit. Cameras are NOT defined here — they are
 # added through the web UI (discovery or manual entry) and stored in the
 # database, since credentials change and the UI needs to write them.
+#
+# NOTE: nearly everything below can now be edited live from Settings (Weather,
+# Alerts, Network, Storage). Those in-app edits are stored in the database and
+# OVERRIDE this file; the file acts as the initial seed and as a safe fallback
+# (e.g. if a UI-set port can't bind at boot, or you launch with
+# SENTRY_IGNORE_DB_NETWORK=1). You rarely need to hand-edit this after setup.
 
 server:
   # "::" listens on IPv4 and IPv6 together, reachable at http://<host>.local.
@@ -34,15 +40,30 @@ server:
   secure_cookies: false
 
 storage:
-  # Where recordings live. Relative paths resolve against the project root.
-  recordings_dir: recordings
+  # recordings_dir and clips_dir can also be relocated live from
+  # Settings → Storage (e.g. onto a mounted NAS) — that override is stored in
+  # the database and wins over these values, but falls back to them if the
+  # stored path isn't mounted/writable at boot. These are the defaults / seed.
+  #
+  # Recordings live in an ordered POOL of volumes. Footage fills them top to
+  # bottom: when one reaches its cap it overflows to the next — so you can add a
+  # NAS or second drive as extra capacity. Edit this list live in
+  # Settings → Storage → Recordings pool. Each volume's `cap` is a percent of
+  # that filesystem ('80%') or an absolute size ('400G').
+  volumes:
+    - path: recordings
+      cap: 80%
+    # - path: /mnt/nas/sentry
+    #   cap: 4T
+  #
+  # Back-compat: a single `recordings_dir:` + `max_usage:` (instead of `volumes`)
+  # is still accepted and becomes volume one.
+  #
   # Where saved clips live. These are kept permanently — retention never touches
   # them — so point this somewhere with room if you save a lot.
   clips_dir: clips
-  # Ring buffer limits. Whichever is hit first triggers pruning of the oldest
-  # footage. A percentage is taken against the total size of the filesystem
-  # holding recordings_dir.
-  max_usage: 80%
+  # Footage older than this is deleted regardless of free space (0 = no age cap).
+  # Per-drive size caps live on each volume above.
   max_age_days: 7
   # Length of each recorded file. 60s keeps the index small while limiting how
   # much footage a single corrupt file can cost you.
@@ -72,3 +93,52 @@ playback:
   always_transcode: false
   # Hardware transcode device. Set to null to force software encoding.
   qsv_device: /dev/dri/renderD128
+
+weather:
+  # NOTE: everything under `weather` and `alerts` can also be edited live from
+  # Settings → Weather / Alerts (stored in the database, which overrides these
+  # file values). The values here act as the initial defaults / seed.
+  #
+  # Dashboard weather + river-level card. Both feeds are free, keyless public
+  # APIs fetched server-side and cached, so browsers never reach the internet
+  # directly. Set enabled: false to hide the card entirely. Needs outbound
+  # internet from this host; on a fully air-gapped box, leave it disabled.
+  enabled: true
+  # Location for current conditions (Open-Meteo). Defaults are Oriental, NC.
+  latitude: 35.0266
+  longitude: -76.6952
+  label: "Oriental, NC"
+  # Units: temperature fahrenheit|celsius, wind mph|kmh|ms|kn, precip inch|mm.
+  temperature_unit: fahrenheit
+  wind_unit: mph
+  precipitation_unit: inch
+  # NWS/NWPS river gauge id for the water panel. ORLN7 is Neuse River at
+  # Oriental (the same gauge the local TownDock page uses). Blank to hide it.
+  # Find other gauges at https://water.noaa.gov.
+  water_gauge: ORLN7
+  water_label: "Neuse River at Oriental"
+  # How often the server re-fetches, seconds (minimum 60). These APIs update
+  # every few minutes at most, so a slow cadence is polite and plenty fresh.
+  refresh_seconds: 600
+  # River-level alerting. water_alert_level is a stage in feet; set > 0 to be
+  # notified (via the alerts webhook below) when the gauge rises to or above it.
+  # water_alert_on_action also notifies whenever NWS moves the gauge into any
+  # flood category past normal (Action, Minor, Moderate, Major).
+  water_alert_level: 0
+  water_alert_on_action: true
+
+alerts:
+  # Event + flood notifications, delivered by POSTing JSON to a webhook. Point
+  # it at Home Assistant, a Discord/Slack relay, ntfy, or your own script.
+  # Disabled until you set a URL. With enabled: true but no webhook_url, events
+  # are still recorded and marked on the history timeline — you just get no
+  # push. Camera detections come from Reolink onboard AI (no local ML needed).
+  enabled: false
+  webhook_url: ""
+  # Don't re-notify the same (camera, kind) more often than this, seconds.
+  cooldown_seconds: 120
+  # Which Reolink AI classes to raise events for: person, vehicle, animal, and
+  # optionally motion (plain motion detection — noisier).
+  detect: [person, vehicle, animal]
+  # How often to poll each Reolink camera's AI state, seconds.
+  poll_seconds: 2.0

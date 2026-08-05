@@ -5,11 +5,20 @@
 <div class="page-head">
   <div>
     <h1>Settings</h1>
-    <p>Storage limits live in <span class="mono">config/config.yaml</span>.</p>
+    <p>Manage cameras, users, and system configuration.</p>
   </div>
 </div>
 
-<div class="stats" style="margin-bottom: 26px;">
+<nav class="settings-tabs" role="tablist">
+  <button type="button" class="settings-tab" data-tab-btn="cameras">Cameras</button>
+  <button type="button" class="settings-tab" data-tab-btn="weather">Weather</button>
+  <button type="button" class="settings-tab" data-tab-btn="alerts">Alerts &amp; events</button>
+  <button type="button" class="settings-tab" data-tab-btn="network">Network</button>
+  <button type="button" class="settings-tab" data-tab-btn="users">Users</button>
+  <button type="button" class="settings-tab" data-tab-btn="storage">Storage</button>
+</nav>
+
+<div class="stats" data-tab="storage" style="margin-bottom: 26px;">
   <div class="stat">
     <div class="k">Recorded</div>
     <div class="v">{{ storage.used_bytes | human_size }}</div>
@@ -36,6 +45,290 @@
   </div>
 </div>
 
+<!-- ========================= RECORDINGS POOL ======================= -->
+<div class="panel" data-tab="storage" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Recordings pool</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small" data-form-result="volumes"></span>
+      <button class="btn btn-sm" type="button" id="volume-add">Add volume</button>
+      <button class="btn btn-sm btn-primary" type="button" id="volume-save">Save pool</button>
+    </div>
+  </div>
+  <div class="panel-pad">
+    <div id="volume-list" class="volume-list"><div class="muted small">Loading…</div></div>
+    <p class="muted small" style="margin: 12px 0 0;">Footage fills volumes top to bottom: when one reaches its cap, new recordings overflow to the next. Point volumes at mounted drives or a NAS (e.g. <span class="mono">/mnt/nas/sentry</span>) — mount at the OS level first (fstab). Cap is a percent of that drive (<span class="mono">80%</span>) or a size (<span class="mono">400G</span>). Existing footage keeps playing wherever it already lives.</p>
+    <div style="border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px;">
+      <div class="set-label">Move stranded footage</div>
+      <div class="row" style="gap: 10px; align-items: center;">
+        <button type="button" class="btn btn-sm" id="storage-migrate">Move stranded footage now</button>
+        <span class="small muted" id="storage-migrate-status">Consolidates footage on drives you removed from the pool back onto the primary volume.</span>
+      </div>
+      <div class="bar" id="storage-migrate-bar" hidden style="margin-top: 8px;"><span style="width: 0%"></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================== SAVED CLIPS ========================= -->
+<div class="panel" data-tab="storage" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Saved clips</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small" data-form-result="storage"></span>
+      <button class="btn btn-sm" type="button" id="storage-check">Check</button>
+      <button class="btn btn-sm btn-primary" type="button" id="storage-save">Save</button>
+    </div>
+  </div>
+  <div class="panel-pad settings-grid">
+    <label class="set-field set-span2">
+      <span class="set-label">Saved clips directory</span>
+      <input type="text" class="rec-select" data-storage-field="clips_dir" value="{{ config.storage.clips_dir }}">
+      <span class="set-hint" data-storage-space="clips_dir"></span>
+    </label>
+    <div class="set-field set-span2">
+      <p class="muted small" style="margin: 0;">Exported/saved clips live here and are kept permanently — retention never touches them.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= STORAGE LIMITS ======================== -->
+<div class="panel" data-tab="storage" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Storage limits</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small" data-form-result="storage_limits"></span>
+      <button class="btn btn-sm btn-primary" type="submit" form="storage-limits-form">Save limits</button>
+    </div>
+  </div>
+  <form class="panel-pad settings-grid" id="storage-limits-form" data-settings-form="storage_limits">
+    <div class="set-field set-span2">
+      <p class="muted small" style="margin: 0;">Per-drive capacity is set on each volume in the Recordings pool above. These are the pool-wide limits.</p>
+    </div>
+    <label class="set-field">
+      <span class="set-label">Global max age (days)</span>
+      <input type="number" min="0" class="rec-select" data-field="max_age_days" data-type="int" value="{{ config.storage.max_age_days }}">
+      <span class="set-hint">Hard cap — footage older than this is deleted. 0 = no age cap.</span>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Segment length (seconds)</span>
+      <input type="number" min="5" max="3600" class="rec-select" data-field="segment_seconds" data-type="int" value="{{ config.storage.segment_seconds }}">
+      <span class="set-hint">Length of each recorded file. Recording restarts to apply.</span>
+    </label>
+  </form>
+</div>
+
+<!-- ============================= NETWORK =========================== -->
+<div class="panel" data-tab="network" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Network</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small" data-form-result="network"></span>
+      <button class="btn btn-sm btn-primary" type="submit" form="network-form">Save network</button>
+    </div>
+  </div>
+  <form class="panel-pad settings-grid" id="network-form" data-settings-form="network">
+    <div class="set-field set-span2">
+      <p class="muted small" style="margin: 0;">Fields marked <span class="pill" style="font-size:11px;">restart</span> only take effect after a full restart — and a bad value there falls back to <span class="mono">config.yaml</span> on boot (or launch with <span class="mono">SENTRY_IGNORE_DB_NETWORK=1</span>) so you can't get locked out.</p>
+    </div>
+
+    <label class="set-field">
+      <span class="set-label">Listen host <span class="pill" style="font-size:11px;">restart</span></span>
+      <input type="text" class="rec-select" data-field="host" value="{{ config.server.host }}">
+      <span class="set-hint"><span class="mono">::</span> = all interfaces (IPv4+IPv6), or an IP.</span>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Listen port <span class="pill" style="font-size:11px;">restart</span></span>
+      <input type="number" min="1" max="65535" class="rec-select" data-field="port" data-type="int" value="{{ config.server.port }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">Session length (days)</span>
+      <input type="number" min="1" class="rec-select" data-field="session_days" data-type="int" value="{{ config.server.session_days }}">
+    </label>
+    <label class="set-field set-inline">
+      <span class="set-label">Secure cookies (HTTPS only)</span>
+      <span class="switch">
+        <input type="checkbox" data-field="secure_cookies" data-type="bool" {{ 'checked' if config.server.secure_cookies }}>
+        <span class="track"></span>
+      </span>
+    </label>
+
+    <label class="set-field">
+      <span class="set-label">go2rtc API port <span class="pill" style="font-size:11px;">restart</span></span>
+      <input type="number" min="1" max="65535" class="rec-select" data-field="go2rtc_api_port" data-type="int" value="{{ config.go2rtc.api_port }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">go2rtc RTSP port <span class="pill" style="font-size:11px;">restart</span></span>
+      <input type="number" min="1" max="65535" class="rec-select" data-field="go2rtc_rtsp_port" data-type="int" value="{{ config.go2rtc.rtsp_port }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">go2rtc WebRTC port <span class="pill" style="font-size:11px;">restart</span></span>
+      <input type="number" min="1" max="65535" class="rec-select" data-field="go2rtc_webrtc_port" data-type="int" value="{{ config.go2rtc.webrtc_port }}">
+    </label>
+
+    <div class="set-field set-span2">
+      <span class="set-label">Discovery subnets</span>
+      <input type="text" class="rec-select" data-field="discovery_subnets" value="{{ config.discovery.subnets | join(', ') }}" placeholder="blank = auto-detect, e.g. 192.168.1.0/24, 10.0.0.0/24">
+      <span class="set-hint">CIDRs the network scan sweeps for cameras. Comma-separated.</span>
+    </div>
+    <label class="set-field">
+      <span class="set-label">Discovery timeout (s)</span>
+      <input type="number" step="0.1" min="0.1" class="rec-select" data-field="discovery_timeout" data-type="float" value="{{ config.discovery.timeout }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">ONVIF wait (s)</span>
+      <input type="number" step="0.1" min="0.1" class="rec-select" data-field="onvif_wait" data-type="float" value="{{ config.discovery.onvif_wait }}">
+    </label>
+
+    <label class="set-field set-inline">
+      <span class="set-label">Always transcode playback</span>
+      <span class="switch">
+        <input type="checkbox" data-field="always_transcode" data-type="bool" {{ 'checked' if config.playback.always_transcode }}>
+        <span class="track"></span>
+      </span>
+    </label>
+    <label class="set-field">
+      <span class="set-label">QSV device</span>
+      <input type="text" class="rec-select" data-field="qsv_device" value="{{ config.playback.qsv_device or '' }}" placeholder="/dev/dri/renderD128 — blank = software">
+    </label>
+  </form>
+</div>
+
+<!-- ============================ WEATHER ============================ -->
+<div class="panel" data-tab="weather" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Weather &amp; river</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small" data-form-result="weather"></span>
+      <button class="btn btn-sm btn-primary" type="submit" form="weather-form">Save weather</button>
+    </div>
+  </div>
+  <form class="panel-pad settings-grid" id="weather-form" data-settings-form="weather">
+    <label class="set-field set-inline">
+      <span class="set-label">Show weather card</span>
+      <span class="switch">
+        <input type="checkbox" data-field="enabled" data-type="bool" {{ 'checked' if config.weather.enabled }}>
+        <span class="track"></span>
+      </span>
+    </label>
+
+    <div class="set-field set-span2">
+      <span class="set-label">Location</span>
+      <div class="row" style="gap: 8px;">
+        <input type="search" id="geo-search" class="rec-select" style="flex: 1; min-width: 160px;"
+               placeholder="Search a town, e.g. Oriental, NC" autocomplete="off">
+        <button type="button" class="btn btn-sm" id="geo-search-btn">Find</button>
+      </div>
+      <div class="geo-results" id="geo-results" hidden></div>
+    </div>
+
+    <label class="set-field">
+      <span class="set-label">Label</span>
+      <input type="text" class="rec-select" data-field="label" value="{{ config.weather.label }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">Latitude</span>
+      <input type="number" step="0.0001" class="rec-select" data-field="latitude" data-type="float" value="{{ config.weather.latitude }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">Longitude</span>
+      <input type="number" step="0.0001" class="rec-select" data-field="longitude" data-type="float" value="{{ config.weather.longitude }}">
+    </label>
+
+    <label class="set-field">
+      <span class="set-label">Temperature</span>
+      <select class="rec-select" data-field="temperature_unit">
+        <option value="fahrenheit" {{ 'selected' if config.weather.temperature_unit == 'fahrenheit' }}>Fahrenheit</option>
+        <option value="celsius" {{ 'selected' if config.weather.temperature_unit == 'celsius' }}>Celsius</option>
+      </select>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Wind</span>
+      <select class="rec-select" data-field="wind_unit">
+        {% for v, t in [('mph','mph'),('kmh','km/h'),('ms','m/s'),('kn','knots')] %}
+        <option value="{{ v }}" {{ 'selected' if config.weather.wind_unit == v }}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Precipitation</span>
+      <select class="rec-select" data-field="precipitation_unit">
+        <option value="inch" {{ 'selected' if config.weather.precipitation_unit == 'inch' }}>inches</option>
+        <option value="mm" {{ 'selected' if config.weather.precipitation_unit == 'mm' }}>mm</option>
+      </select>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Refresh (seconds)</span>
+      <input type="number" min="60" class="rec-select" data-field="refresh_seconds" data-type="int" value="{{ config.weather.refresh_seconds }}">
+    </label>
+
+    <label class="set-field">
+      <span class="set-label">River gauge (NWS id)</span>
+      <input type="text" class="rec-select" data-field="water_gauge" value="{{ config.weather.water_gauge }}" placeholder="ORLN7 — blank to hide">
+    </label>
+    <label class="set-field">
+      <span class="set-label">River label</span>
+      <input type="text" class="rec-select" data-field="water_label" value="{{ config.weather.water_label }}">
+    </label>
+    <label class="set-field">
+      <span class="set-label">Flood alert level (ft)</span>
+      <input type="number" step="0.1" min="0" class="rec-select" data-field="water_alert_level" data-type="float" value="{{ config.weather.water_alert_level }}">
+      <span class="set-hint">0 = off. Alerts when the gauge rises to/above this.</span>
+    </label>
+    <label class="set-field set-inline">
+      <span class="set-label">Alert on NWS flood stage</span>
+      <span class="switch">
+        <input type="checkbox" data-field="water_alert_on_action" data-type="bool" {{ 'checked' if config.weather.water_alert_on_action }}>
+        <span class="track"></span>
+      </span>
+    </label>
+  </form>
+</div>
+
+<!-- ========================= ALERTS & EVENTS ======================= -->
+<div class="panel" data-tab="alerts" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;">Alerts &amp; events</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small muted" data-alert-result></span>
+      <button class="btn btn-sm" type="button" id="alert-test">Send test alert</button>
+      <span class="small" data-form-result="alerts"></span>
+      <button class="btn btn-sm btn-primary" type="submit" form="alerts-form">Save alerts</button>
+    </div>
+  </div>
+  <form class="panel-pad settings-grid" id="alerts-form" data-settings-form="alerts">
+    <label class="set-field set-inline">
+      <span class="set-label">Alerts enabled</span>
+      <span class="switch">
+        <input type="checkbox" data-field="enabled" data-type="bool" {{ 'checked' if config.alerts.enabled }}>
+        <span class="track"></span>
+      </span>
+    </label>
+    <div class="set-field set-span2">
+      <span class="set-label">Webhook URL</span>
+      <input type="url" class="rec-select" data-field="webhook_url" value="{{ config.alerts.webhook_url }}"
+             placeholder="https://… (Home Assistant, Discord relay, ntfy, your script)">
+      <span class="set-hint">Leave blank to record events (timeline markers) without sending a notification.</span>
+    </div>
+    <div class="set-field set-span2">
+      <span class="set-label">Detect (Reolink onboard AI)</span>
+      <div class="chk-row">
+        {% for k in ['person', 'vehicle', 'animal', 'motion'] %}
+        <label class="chk"><input type="checkbox" data-detect value="{{ k }}" {{ 'checked' if k in config.alerts.detect }}> {{ k|capitalize }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="set-field">
+      <span class="set-label">Cooldown (seconds)</span>
+      <input type="number" min="0" class="rec-select" data-field="cooldown_seconds" data-type="int" value="{{ config.alerts.cooldown_seconds }}">
+      <span class="set-hint">Minimum gap between repeats of the same camera + kind.</span>
+    </label>
+    <label class="set-field">
+      <span class="set-label">Poll interval (seconds)</span>
+      <input type="number" min="0.5" step="0.5" class="rec-select" data-field="poll_seconds" data-type="float" value="{{ config.alerts.poll_seconds }}">
+    </label>
+  </form>
+</div>
+
 {% set retentions = [
   ('28800', '8 hours'), ('86400', '1 day'), ('172800', '2 days'),
   ('259200', '3 days'), ('604800', '7 days'), ('1209600', '14 days'),
@@ -44,7 +337,7 @@
 {% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
 {% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
 
-<div class="panel">
+<div class="panel" data-tab="cameras">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
     <h2 style="margin: 0; font-size: 16px;">Cameras</h2>
     <a class="btn btn-sm btn-primary" href="/discover">Add camera</a>
@@ -237,7 +530,7 @@
 </div>
 
 {% if virtuals %}
-<div class="panel" style="margin-top: 22px;">
+<div class="panel" data-tab="cameras" style="margin-top: 22px;">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
     <h2 style="margin: 0; font-size: 16px;">Virtual cameras</h2>
   </div>
@@ -272,7 +565,7 @@
 
 <div class="settings-cols">
 {% if is_admin %}
-<div class="panel">
+<div class="panel" data-tab="users">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
     <h2 style="margin: 0; font-size: 16px;">Users</h2>
     <button class="btn btn-sm btn-primary" id="add-user-btn">Add user</button>
@@ -300,11 +593,12 @@
 </div>
 {% endif %}
 
-<div class="panel panel-pad">
+<div class="panel panel-pad" data-tab="storage">
   <h2 style="margin: 0 0 12px; font-size: 16px;">System</h2>
   <div class="list" id="system-status">
     <div class="list-item"><span class="muted">Loading&hellip;</span></div>
   </div>
+  <p class="muted small" style="margin: 12px 0 0;">Storage limits, ports, and hardware live in <span class="mono">config/config.yaml</span>.</p>
 </div>
 </div>
 
@@ -341,8 +635,39 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ asset('settings.js') }}"></script>
 <script src="{{ asset('streams.js') }}"></script>
 <script src="{{ asset('schedules.js') }}"></script>
+<script>
+// Send a test alert to the configured webhook.
+(function () {
+  const btn = document.getElementById('alert-test');
+  const out = document.querySelector('[data-alert-result]');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Sending…';
+    if (out) out.textContent = '';
+    try {
+      const r = await fetch('/api/alerts/test', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (out) {
+        out.textContent = r.ok
+          ? (d.sent ? '✓ Sent — check your webhook' : 'Webhook did not accept it')
+          : (d.error || 'Failed');
+        out.style.color = r.ok && d.sent ? 'var(--ok)' : 'var(--bad)';
+      }
+    } catch (_) {
+      if (out) { out.textContent = 'Network error'; out.style.color = 'var(--bad)'; }
+    } finally {
+      btn.textContent = label;
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+
 <script>
 // A deliberate "double clutch" for every destructive action: you must type the
 // exact name to confirm a removal.

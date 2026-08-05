@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import time
@@ -37,14 +38,22 @@ QUIET_SECONDS = 10.0
 
 MAX_BACKOFF = 30.0
 
+# Never write onto a volume with less than this free — the free-space backstop
+# that keeps a filesystem (and the OS, for the primary) alive.
+WRITE_FREE_FLOOR = 5 * 1024**3  # 5 GB
+
 
 class CameraRecorder:
     """Supervises the ffmpeg process for a single camera."""
 
-    def __init__(self, camera: dict[str, Any], config: Any):
+    def __init__(self, camera: dict[str, Any], config: Any, base_dir: Path | None = None):
         self.camera_id = camera["id"]
         self.camera = camera
         self.config = config
+        # The pool volume this recorder currently writes to. Defaults to the
+        # primary; RecordingService picks the active one and rebuilds the
+        # recorder when overflow moves it to a different volume.
+        self.base_dir = base_dir or config.storage.recordings_dir
         self.process: subprocess.Popen | None = None
         self.backoff = 1.0
         self.last_error: str | None = None
@@ -53,7 +62,7 @@ class CameraRecorder:
 
     @property
     def directory(self) -> Path:
-        return self.config.storage.recordings_dir / self.camera_id
+        return self.base_dir / self.camera_id
 
     def ensure_directories(self) -> None:
         """Pre-create today's and tomorrow's day folders.
@@ -201,9 +210,34 @@ class RecordingService:
         self.db = db
         self.go2rtc = go2rtc
         self.recorders: dict[str, CameraRecorder] = {}
+        self.active_dir: Path | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._index_thread: threading.Thread | None = None
+
+    def choose_volume(self) -> Path:
+        """Which pool volume new footage should land on: the first available
+        volume still under its cap with free space. When every volume is full,
+        fall back to the first available one (ring-buffer mode — retention then
+        prunes oldest across the pool). Absent volumes are skipped."""
+        volumes = self.config.storage.volumes
+        available = []
+        for vol in volumes:
+            if not vol.available():
+                continue
+            available.append(vol.path)
+            try:
+                free = shutil.disk_usage(vol.path).free
+            except OSError:
+                continue
+            used = self.db.recorded_bytes_under(str(vol.path))
+            if used < vol.cap_bytes() and free > WRITE_FREE_FLOOR:
+                return vol.path
+        if available:
+            return available[0]
+        # Nothing mounted: last resort is the primary path (may fail to write,
+        # which the recorder reports and retries — better than crashing).
+        return self.config.storage.recordings_dir
 
     def start(self) -> None:
         self._stop.clear()
@@ -248,14 +282,20 @@ class RecordingService:
                 log.info("stopping recorder for removed camera %s", camera_id)
                 self.recorders.pop(camera_id).stop()
 
+        # Pick the pool volume new footage should land on right now. Shared by
+        # every camera (the pool overflows as a whole), so it's computed once.
+        active = self.choose_volume()
+        self.active_dir = active
         for camera_id, camera in wanted.items():
             existing = self.recorders.get(camera_id)
-            if existing is None:
-                self.recorders[camera_id] = CameraRecorder(dict(camera), self.config)
-            elif existing.camera.get("record_stream") != camera["record_stream"]:
-                # Recording source changed under us; rebuild the process.
-                existing.stop()
-                self.recorders[camera_id] = CameraRecorder(dict(camera), self.config)
+            # Rebuild when the recorder is new, the record stream changed, or the
+            # active volume moved (overflow) — the last one makes fail-over work.
+            if (existing is None
+                    or existing.camera.get("record_stream") != camera["record_stream"]
+                    or existing.base_dir != active):
+                if existing is not None:
+                    existing.stop()
+                self.recorders[camera_id] = CameraRecorder(dict(camera), self.config, active)
 
     def restart(self, camera_id: str) -> None:
         """Drop a camera's recorder so the supervisor rebuilds it fresh.
@@ -297,39 +337,42 @@ class RecordingService:
         now = time.time()
         for camera in self.db.cameras():
             camera_id = camera["id"]
-            directory = self.config.storage.recordings_dir / camera_id
-            if not directory.exists():
-                continue
             known = self.db.known_paths(camera_id)
-            for path in sorted(directory.glob("*/*.mp4")):
-                key = str(path)
-                if key in known:
+            # Footage for one camera can be spread across every pool volume, so
+            # scan them all.
+            for base in self.config.storage.volume_paths():
+                directory = base / camera_id
+                if not directory.exists():
                     continue
-                try:
-                    stat = path.stat()
-                except OSError:
-                    continue
-                if now - stat.st_mtime < QUIET_SECONDS:
-                    continue  # ffmpeg is still writing this one
-                if stat.st_size == 0:
-                    path.unlink(missing_ok=True)
-                    continue
+                for path in sorted(directory.glob("*/*.mp4")):
+                    key = str(path)
+                    if key in known:
+                        continue
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if now - stat.st_mtime < QUIET_SECONDS:
+                        continue  # ffmpeg is still writing this one
+                    if stat.st_size == 0:
+                        path.unlink(missing_ok=True)
+                        continue
 
-                duration, codec = probe_duration(path)
-                if not duration or duration <= 0:
-                    # Unreadable: usually a segment cut short by a crash.
-                    # Leave it on disk but do not index it, or the timeline
-                    # would advertise footage that cannot be played.
-                    continue
-                self.db.add_segment(
-                    camera_id=camera_id,
-                    path=key,
-                    start_ts=stat.st_mtime - duration,
-                    duration=duration,
-                    size=stat.st_size,
-                    codec=codec,
-                )
-                added += 1
+                    duration, codec = probe_duration(path)
+                    if not duration or duration <= 0:
+                        # Unreadable: usually a segment cut short by a crash.
+                        # Leave it on disk but do not index it, or the timeline
+                        # would advertise footage that cannot be played.
+                        continue
+                    self.db.add_segment(
+                        camera_id=camera_id,
+                        path=key,
+                        start_ts=stat.st_mtime - duration,
+                        duration=duration,
+                        size=stat.st_size,
+                        codec=codec,
+                    )
+                    added += 1
         if added:
             log.debug("indexed %d new segments", added)
         return added

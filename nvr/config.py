@@ -60,18 +60,64 @@ class ServerConfig:
 
 
 @dataclass
+class StorageVolume:
+    """One directory in the recordings pool, with its own capacity cap.
+
+    cap is a share of that volume's filesystem ('80%') or an absolute size
+    ('380G'). Volumes are written in list order: footage overflows to the next
+    once one is at its cap.
+    """
+
+    path: Path
+    cap: str = "80%"
+
+    def cap_bytes(self) -> int:
+        try:
+            total = shutil.disk_usage(self.path).total
+        except OSError:
+            return 0
+        try:
+            return parse_size(self.cap, total)
+        except (ValueError, TypeError):
+            return 0
+
+    def available(self) -> bool:
+        """Mounted and writable right now. Volumes are expected to be fstab-
+        mounted; an absent one is simply skipped for writing/pruning."""
+        try:
+            return self.path.is_dir() and os.access(self.path, os.W_OK)
+        except OSError:
+            return False
+
+
+@dataclass
 class StorageConfig:
-    recordings_dir: Path = ROOT / "recordings"
+    # Ordered recordings pool. The first volume is the primary; writes overflow
+    # to later volumes as earlier ones fill.
+    volumes: list[StorageVolume] = field(
+        default_factory=lambda: [StorageVolume(ROOT / "recordings")]
+    )
     # Saved clips live here — kept permanently, never touched by retention.
     clips_dir: Path = ROOT / "clips"
-    max_usage: str = "80%"
     max_age_days: int = 7
     segment_seconds: int = 60
 
+    @property
+    def recordings_dir(self) -> Path:
+        """The primary volume's path. Kept for the many call sites that predate
+        the multi-volume pool and just want 'where recordings live'."""
+        return self.volumes[0].path if self.volumes else ROOT / "recordings"
+
+    def volume_paths(self) -> list[Path]:
+        return [v.path for v in self.volumes]
+
+    def total_cap_bytes(self) -> int:
+        """Combined capacity across all currently-available volumes."""
+        return sum(v.cap_bytes() for v in self.volumes if v.available())
+
     def max_bytes(self) -> int:
-        """Resolve max_usage against the filesystem holding the recordings."""
-        total = shutil.disk_usage(self.recordings_dir).total
-        return parse_size(self.max_usage, total)
+        """Back-compat alias: the pool's total capacity."""
+        return self.total_cap_bytes()
 
 
 @dataclass
@@ -107,12 +153,60 @@ class PlaybackConfig:
 
 
 @dataclass
+class WeatherConfig:
+    """Dashboard weather + river-level card.
+
+    Both feeds are free, keyless government/public APIs, fetched server-side and
+    cached so browsers never reach the internet directly. Defaults point at
+    Oriental, NC and the NWS river gauge ORLN7 (Neuse River at Oriental).
+    """
+
+    enabled: bool = True
+    latitude: float = 35.0266
+    longitude: float = -76.6952
+    label: str = "Oriental, NC"
+    temperature_unit: str = "fahrenheit"  # or "celsius"
+    wind_unit: str = "mph"                 # mph | kmh | ms | kn
+    precipitation_unit: str = "inch"       # inch | mm
+    # NWS/NWPS gauge id (five-char handle, e.g. ORLN7). Empty disables the
+    # water panel while leaving the weather panel intact.
+    water_gauge: str = "ORLN7"
+    water_label: str = "Neuse River at Oriental"
+    refresh_seconds: int = 600
+    # River-level alerting (uses the same gauge). water_alert_level is a stage
+    # in feet; 0 disables the threshold. water_alert_on_action fires whenever
+    # NWS reports any flood category past the normal "no_flooding".
+    water_alert_level: float = 0.0
+    water_alert_on_action: bool = True
+
+
+@dataclass
+class AlertsConfig:
+    """Event/flood notifications, delivered by POSTing JSON to a webhook.
+
+    Deliberately transport-agnostic: the webhook can point at Home Assistant, a
+    Discord/Slack relay, ntfy, or your own script. Disabled until a URL is set.
+    """
+
+    enabled: bool = False
+    webhook_url: str = ""
+    # Don't re-notify the same (camera, kind) more often than this, seconds.
+    cooldown_seconds: int = 120
+    # Reolink AI object classes to raise events/alerts for.
+    detect: list[str] = field(default_factory=lambda: ["person", "vehicle", "animal"])
+    # How often to poll each Reolink camera's AI state, seconds.
+    poll_seconds: float = 2.0
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     go2rtc: Go2rtcConfig = field(default_factory=Go2rtcConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     playback: PlaybackConfig = field(default_factory=PlaybackConfig)
+    weather: WeatherConfig = field(default_factory=WeatherConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
     data_dir: Path = ROOT / "data"
 
     @property
@@ -168,10 +262,25 @@ def load(path: Path | None = None) -> Config:
     )
 
     st = raw.get("storage") or {}
+    raw_volumes = st.get("volumes")
+    if raw_volumes:
+        volumes = [
+            StorageVolume(
+                _resolve(ROOT, v["path"]),
+                str(v.get("cap", v.get("max_usage", "80%"))),
+            )
+            for v in raw_volumes
+            if v.get("path")
+        ]
+    else:
+        # Back-compat: a single recordings_dir + max_usage becomes volume one.
+        volumes = [StorageVolume(
+            _resolve(ROOT, st.get("recordings_dir", "recordings")),
+            str(st.get("max_usage", "80%")),
+        )]
     cfg.storage = StorageConfig(
-        recordings_dir=_resolve(ROOT, st.get("recordings_dir", "recordings")),
+        volumes=volumes or [StorageVolume(ROOT / "recordings")],
         clips_dir=_resolve(ROOT, st.get("clips_dir", "clips")),
-        max_usage=str(st.get("max_usage", cfg.storage.max_usage)),
         max_age_days=int(st.get("max_age_days", cfg.storage.max_age_days)),
         segment_seconds=int(st.get("segment_seconds", cfg.storage.segment_seconds)),
     )
@@ -195,6 +304,31 @@ def load(path: Path | None = None) -> Config:
     cfg.playback = PlaybackConfig(
         always_transcode=bool(p.get("always_transcode", False)),
         qsv_device=p.get("qsv_device", cfg.playback.qsv_device),
+    )
+
+    w = raw.get("weather") or {}
+    cfg.weather = WeatherConfig(
+        enabled=bool(w.get("enabled", cfg.weather.enabled)),
+        latitude=float(w.get("latitude", cfg.weather.latitude)),
+        longitude=float(w.get("longitude", cfg.weather.longitude)),
+        label=str(w.get("label", cfg.weather.label)),
+        temperature_unit=str(w.get("temperature_unit", cfg.weather.temperature_unit)),
+        wind_unit=str(w.get("wind_unit", cfg.weather.wind_unit)),
+        precipitation_unit=str(w.get("precipitation_unit", cfg.weather.precipitation_unit)),
+        water_gauge=str(w.get("water_gauge", cfg.weather.water_gauge)),
+        water_label=str(w.get("water_label", cfg.weather.water_label)),
+        refresh_seconds=int(w.get("refresh_seconds", cfg.weather.refresh_seconds)),
+        water_alert_level=float(w.get("water_alert_level", cfg.weather.water_alert_level)),
+        water_alert_on_action=bool(w.get("water_alert_on_action", cfg.weather.water_alert_on_action)),
+    )
+
+    a = raw.get("alerts") or {}
+    cfg.alerts = AlertsConfig(
+        enabled=bool(a.get("enabled", cfg.alerts.enabled)),
+        webhook_url=str(a.get("webhook_url", cfg.alerts.webhook_url) or ""),
+        cooldown_seconds=int(a.get("cooldown_seconds", cfg.alerts.cooldown_seconds)),
+        detect=list(a.get("detect") or cfg.alerts.detect),
+        poll_seconds=float(a.get("poll_seconds", cfg.alerts.poll_seconds)),
     )
 
     data_env = os.environ.get("SENTRY_DATA_DIR")

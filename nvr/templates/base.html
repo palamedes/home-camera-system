@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Sentry{% endblock %}</title>
+  <script>
+    // Apply the saved theme before first paint so there's no flash of dark.
+    (function () {
+      try {
+        var t = localStorage.getItem('sentry-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="{{ asset('app.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
 </head>
@@ -37,6 +46,9 @@
         <div class="account-menu-name">{{ user['username'] }}</div>
         <div class="account-menu-sub">{{ 'Administrator' if is_admin else 'Viewer' }}</div>
       </div>
+      <button class="menu-item" id="theme-item" role="menuitem" type="button" aria-pressed="false">
+        <span data-theme-label>Light mode</span>
+      </button>
       <button class="menu-item" id="change-password-item" role="menuitem" type="button">
         Change password
       </button>

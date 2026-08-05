@@ -136,6 +136,36 @@ class ReolinkClient:
                 pass
             self.token = None
 
+    def ai_state(self, channel: int = 0) -> dict[str, bool]:
+        """Current onboard-AI alarm state, normalised to our vocabulary.
+
+        Reolink reports each class as {alarm_state, support}; we map
+        people->person, vehicle->vehicle, dog_cat->animal and only include
+        classes the camera actually supports. An unsupported camera (older
+        firmware, no AI) returns an empty dict.
+        """
+        data = self._call(
+            [{"cmd": "GetAiState", "action": 0, "param": {"channel": channel}}]
+        )
+        value = data[0].get("value") or {}
+        mapping = {"people": "person", "vehicle": "vehicle", "dog_cat": "animal"}
+        out: dict[str, bool] = {}
+        for reo_key, our_key in mapping.items():
+            entry = value.get(reo_key)
+            if isinstance(entry, dict) and int(entry.get("support", 0)):
+                out[our_key] = bool(int(entry.get("alarm_state", 0)))
+        return out
+
+    def motion_state(self, channel: int = 0) -> bool | None:
+        """Plain motion-detection state, or None if the camera won't report it."""
+        try:
+            data = self._call(
+                [{"cmd": "GetMdState", "action": 0, "param": {"channel": channel}}]
+            )
+            return bool(int(data[0]["value"]["state"]))
+        except Exception:
+            return None
+
     def device_info(self) -> ReolinkInfo:
         info = ReolinkInfo()
         data = self._call([{"cmd": "GetDevInfo", "action": 0, "param": {}}])

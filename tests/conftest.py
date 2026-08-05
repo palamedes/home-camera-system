@@ -55,6 +55,10 @@ def app_module():
     main.go2rtc.camera_reachable = lambda *a, **k: True
     main.recording.sync = lambda *a, **k: None
     main.recording.start = lambda *a, **k: None
+    # The weather + event services would spin up threads hitting the network
+    # (weather APIs, camera AI polling); keep them inert during tests.
+    main.weather.start = lambda *a, **k: None
+    main.events.start = lambda *a, **k: None
     return main
 
 
@@ -63,7 +67,7 @@ def db(app_module):
     """The live app database, wiped clean before each test."""
     d = app_module.db
     for table in ("clips", "virtual_cameras", "segments", "schedules",
-                  "cameras", "sessions", "users"):
+                  "events", "app_settings", "cameras", "sessions", "users"):
         d.execute(f"DELETE FROM {table}")
     return d
 

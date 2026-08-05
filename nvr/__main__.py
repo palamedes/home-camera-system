@@ -9,6 +9,7 @@ claims to control — one place to change it, not two.
 from __future__ import annotations
 
 import socket
+import sys
 
 import uvicorn
 
@@ -86,9 +87,30 @@ def _make_socket(host: str, port: int) -> socket.socket:
     return sock
 
 
+def _apply_db_overrides(cfg: object) -> None:
+    """Replay in-app settings (incl. UI-set host/port) over config.yaml before we
+    bind. Best-effort: any failure just leaves the file config in place."""
+    try:
+        from .db import Database
+        from . import appsettings
+        appsettings.load_overrides(cfg, Database(cfg.db_path))
+    except Exception as exc:  # noqa: BLE001 - never let settings block startup
+        print(f"warning: could not apply stored settings: {exc}", file=sys.stderr)
+
+
 def main() -> None:
     cfg = config_module.load()
-    sock = _make_socket(cfg.server.host, cfg.server.port)
+    _apply_db_overrides(cfg)
+    try:
+        sock = _make_socket(cfg.server.host, cfg.server.port)
+    except SystemExit as exc:
+        # A UI-set host/port that can't bind must never brick startup: report it
+        # and fall back to the plain config.yaml networking.
+        print(f"{exc}\nFalling back to config.yaml networking. Set "
+              "SENTRY_IGNORE_DB_NETWORK=1 to always skip UI network overrides.",
+              file=sys.stderr)
+        cfg = config_module.load()
+        sock = _make_socket(cfg.server.host, cfg.server.port)
 
     server = uvicorn.Server(
         uvicorn.Config(
