@@ -191,6 +191,33 @@ work. Copy that file to each device and install it:
 
 After that `https://home.local` shows a valid lock and Talk works.
 
+#### Or: a real certificate, no per-device trust
+
+The local CA above means every device has to install and trust the root — a
+chore, and genuinely painful on iOS. If you own a domain, you can skip all of
+that and get a **real, publicly-trusted** certificate that every device accepts
+out of the box, while still keeping the service **LAN-only**.
+
+The trick is the ACME **DNS-01** challenge: Caddy proves you own the domain by
+writing a temporary TXT record via your DNS provider's API — it never exposes
+the box, opens no inbound ports, and needs no port-forwarding. You point (say)
+`home.example.com` at the box's **LAN** IP, so the name resolves to a private
+address and only works inside your network.
+
+See `deploy/Caddyfile.public-dns.example` and `deploy/sentry-tls.env.example`
+for a complete, credential-free template (Namecheap shown; caddy-dns modules
+exist for Cloudflare, Route53, and many others). In short: add the A record,
+enable your DNS provider's API, use a Caddy build that includes that provider's
+module (`xcaddy build --with github.com/caddy-dns/<provider>`, or a custom
+download from caddyserver.com), put your real values in `~/.config/sentry-tls.env`
+(git-ignored), and point `sentry-tls.service` at that config + env file.
+
+Caveat for Namecheap specifically: its API rewrites a domain's *entire* record
+set on each change and requires whitelisting the box's WAN IP — so prefer a
+domain that doesn't host anything else, back up the zone's records first, and
+know that a WAN IP change means updating the allowlist before the cert's next
+~60-day renewal.
+
 ## Forgot your password
 
 Recovery needs shell access to the box — there is no email reset, because

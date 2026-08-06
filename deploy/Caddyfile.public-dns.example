@@ -1,0 +1,43 @@
+# Sentry NVR — HTTPS with a REAL, publicly-trusted certificate
+# =============================================================
+# Use this INSTEAD of the local-CA deploy/Caddyfile when you own a domain and
+# want a green lock on every device with NO per-device certificate trust
+# (the local-CA approach makes every phone/laptop install & trust a root cert;
+# this avoids all of that).
+#
+# How it works: Caddy gets a Let's Encrypt certificate via the DNS-01
+# challenge — it proves you own the domain by creating a temporary TXT record
+# through your DNS provider's API. NOTHING inbound is opened and the box is
+# never exposed to the internet. You point the name at the box's LAN IP, so it
+# resolves to a private address and only works inside your network.
+#
+# This file contains NO personal data. The domain and all credentials come from
+# environment variables loaded by the systemd unit from a git-ignored env file
+# (see deploy/sentry-tls.env.example). Keep real values out of git.
+#
+# Setup (see README -> "HTTPS with a real certificate"):
+#   1. DNS A record:  home.example.com -> <box LAN IP, e.g. 192.168.1.50>
+#   2. Enable your DNS provider's API, get a key/token. (Namecheap also makes
+#      you whitelist the box's WAN IP.) caddy-dns modules exist for many
+#      providers — Cloudflare, Route53, DigitalOcean, etc. — swap the block
+#      below to match yours.
+#   3. Use a Caddy build that INCLUDES your provider's DNS module. The stock
+#      package build does not. Either:
+#         xcaddy build --with github.com/caddy-dns/namecheap
+#      or download one at https://caddyserver.com/download (pick the module).
+#   4. Copy deploy/sentry-tls.env.example -> ~/.config/sentry-tls.env, fill it
+#      in, chmod 600, and point sentry-tls.service at this file + that env file.
+#   5. Open ufw 443 if you run a firewall (see README).
+
+{$SENTRY_DOMAIN} {
+	tls {
+		# Swap "namecheap" for your provider's module if different. The values
+		# are read from the environment, so nothing secret lives in this file.
+		dns namecheap {
+			api_key {env.NAMECHEAP_API_KEY}
+			user {env.NAMECHEAP_API_USER}
+		}
+	}
+	# Terminate TLS here; hand the plain request to Sentry on loopback :80.
+	reverse_proxy 127.0.0.1:80
+}
