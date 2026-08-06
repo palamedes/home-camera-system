@@ -162,7 +162,14 @@ sudo pacman -S caddy                       # or your distro's package
 cp systemd/sentry-tls.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now sentry-tls
+sudo ufw allow 443 comment 'Sentry NVR HTTPS'   # if ufw is active
 ```
+
+That `ufw` line is easy to miss and produces a baffling symptom: the box serves
+`https://home.local` fine *to itself*, but every other device just spins
+forever. ufw's default policy is DROP (not REJECT), so a closed 443 makes remote
+browsers hang rather than fail. If HTTPS works on the box but nowhere else,
+check `sudo ufw status` for 443 before suspecting anything cleverer.
 
 The proxy config is `deploy/Caddyfile`. `:443` is privileged, but the same
 `ip_unprivileged_port_start=80` sysctl that lets Sentry bind `:80` covers it,
