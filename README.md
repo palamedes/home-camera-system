@@ -103,6 +103,48 @@ system unit instead of a user one — add `User=<you>`, `Group=<you>`, and
 Either way, setting `server.port: 8080` in `config/config.yaml` avoids the
 question entirely.
 
+## Running it as a service
+
+Sentry ships as a **systemd user service** (`systemd/sentry-nvr.service`) so it
+starts at boot, restarts on crash, and takes go2rtc and the ffmpeg fleet down
+with it on stop rather than orphaning them. Install it once:
+
+```bash
+cp systemd/sentry-nvr.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sentry-nvr
+sudo loginctl enable-linger "$USER"   # start at boot without a login session
+```
+
+`enable-linger` is the step people miss. A *user* service normally runs only
+while you are logged in; lingering tells systemd to start your user manager at
+boot with no login — which is exactly what a headless, wall-mounted box needs.
+Skip it and the service is "enabled" but never actually starts after a reboot.
+
+One gotcha on some setups: the packaged unit lists
+`SupplementaryGroups=render video` so ffmpeg can reach the QuickSync render
+node. A *user* manager cannot grant a group your account is not already in, so
+if you are not in `render` the service fails to start with `status=216/GROUP`.
+Two fixes: add yourself (`sudo usermod -aG render "$USER"`, then re-login), or —
+if `/dev/dri/renderD128` is already world-accessible (`crw-rw-rw-`, as it is on
+many systems) — just comment that line out of your installed copy; QuickSync
+still works. Installing it as a *system* unit instead (see "About that port")
+sidesteps this entirely, since the system manager can grant any group.
+
+Day to day:
+
+```bash
+systemctl --user status sentry-nvr      # is it healthy?
+systemctl --user restart sentry-nvr     # clean restart (takes go2rtc + ffmpeg with it)
+systemctl --user stop sentry-nvr        # stop it
+journalctl --user -u sentry-nvr -f      # follow the logs live
+journalctl --user -u sentry-nvr -n 200  # last 200 log lines
+```
+
+Because systemd owns the process group, `restart` cleanly reclaims port 80 —
+no more hunting an orphaned process that kept holding the socket after a manual
+kill.
+
 ## Forgot your password
 
 Recovery needs shell access to the box — there is no email reset, because
