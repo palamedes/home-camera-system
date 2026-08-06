@@ -507,6 +507,9 @@ def camera_page(request: Request, camera_id: str):
         stream_name=streams.main_stream_name(camera_id),
         sub_stream_name=streams.sub_stream_name(camera_id),
         talk_stream_name=streams.talk_stream_name(camera_id),
+        # HD (main) on an H.265 camera is served via a go2rtc QSV transcode;
+        # surface that in the live-view mode label so the extra cost is visible.
+        main_is_hevc=streams._is_hevc_url(camera["main_url"]),
     )
 
 

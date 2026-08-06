@@ -59,6 +59,18 @@ def stream_online(info: dict[str, Any] | None) -> bool:
     return False
 
 
+def _is_hevc_url(url: str) -> bool:
+    """Whether an RTSP URL is an H.265/HEVC stream, judged by the path.
+
+    Reolink (and most NVR-style cameras) name the stream in the URL —
+    `h265Preview_01_main` vs `h264Preview_01_sub` — so we can tell without
+    opening a connection. HEVC is unplayable over WebRTC, which is what drives
+    the transcode decision in _sources.
+    """
+    u = (url or "").lower()
+    return "h265" in u or "hevc" in u
+
+
 def main_stream_name(camera_id: str) -> str:
     return camera_id
 
@@ -170,7 +182,7 @@ class Go2rtcManager:
         }
 
     def _sources(self, name: str, url: str) -> list[str]:
-        """Stream sources: the raw RTSP, plus an on-demand Opus audio track.
+        """Stream sources: the raw RTSP, plus an on-demand transcode track.
 
         Cameras emit AAC, which WebRTC cannot carry. The `ffmpeg:...#audio=opus`
         source transcodes AAC->Opus, but go2rtc only spawns it when a consumer
@@ -178,7 +190,18 @@ class Go2rtcManager:
         nothing, and the transcoder dies within ~1s of the last listener
         leaving. It pulls audio from go2rtc's own loopback, not a second camera
         connection.
+
+        H.265 (HEVC) streams need more: browsers cannot decode HEVC over WebRTC
+        at all, so an HEVC main stream is unwatchable live without a video
+        transcode. For those we add an `ffmpeg:...#video=h264#audio=opus`
+        source. go2rtc serves passthrough HEVC to consumers that accept it (the
+        recorder's RTSP pull, MP4 export) and only routes WebRTC — which must
+        have H.264 — to the transcode, spawned on demand. QSV keeps a 4K HEVC
+        transcode nearly free; without a QSV device it falls back to software.
         """
+        if _is_hevc_url(url):
+            hw = "#hardware=qsv" if self.config.playback.qsv_device else ""
+            return [url, f"ffmpeg:{name}#video=h264#audio=opus{hw}"]
         return [url, f"ffmpeg:{name}#audio=opus"]
 
     def _talk_source(self, url: str) -> list[str]:

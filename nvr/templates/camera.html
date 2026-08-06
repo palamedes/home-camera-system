@@ -19,7 +19,8 @@
 
 <div class="player player-fixed" id="player"
      data-stream-main="{{ stream_name }}"
-     data-stream-sub="{{ sub_stream_name if camera.sub_url else '' }}">
+     data-stream-sub="{{ sub_stream_name if camera.sub_url else '' }}"
+     data-main-hevc="{{ '1' if main_is_hevc else '' }}">
   <video id="video" autoplay muted playsinline></video>
   <canvas id="dewarp" hidden></canvas>
   <img id="fallback" hidden alt="{{ camera.name }} live view">
@@ -42,7 +43,14 @@
   <button class="btn btn-danger" id="del-vcam-btn" hidden>Remove</button>
   {% endif %}
   {% endif %}
-  <button class="btn" id="audio-btn" aria-pressed="false">🔇 Audio off</button>
+  {% if camera.sub_url %}
+  <div class="segmented" id="quality-switch" role="group" aria-label="Stream quality"
+       title="SD is the lighter sub stream; HD is the full-resolution main stream">
+    <button type="button" data-q="sub">SD</button>
+    <button type="button" data-q="main">HD</button>
+  </div>
+  {% endif %}
+  <button class="btn" id="audio-btn" aria-pressed="false">🔊 Audio</button>
   {% if is_admin %}
   <button class="btn" id="talk-btn" data-stream="{{ talk_stream_name }}"
           aria-pressed="false"
@@ -53,11 +61,11 @@
   <div class="cam-controls" id="cam-controls" data-camera-id="{{ camera.id }}" hidden>
     <button class="btn" id="light-btn" aria-pressed="false" hidden>💡 Light</button>
     <div class="nv-group" id="nv-group" hidden>
-      <div class="segmented" id="nv-mode" role="group" aria-label="Day / night colour mode">
-        <button type="button" data-mode="auto">Auto</button>
-        <button type="button" data-mode="color">Colour</button>
-        <button type="button" data-mode="bw">B&amp;W</button>
-      </div>
+      <select id="nv-mode" class="rec-select" aria-label="Day / night colour mode" title="Colour mode">
+        <option value="auto">Colour: Auto</option>
+        <option value="color">Colour: On</option>
+        <option value="bw">Colour: B&amp;W</option>
+      </select>
       <select id="nv-ir" class="rec-select" aria-label="IR lights" title="Infrared lights">
         <option value="auto">IR: Auto</option>
         <option value="on">IR: On</option>
@@ -159,6 +167,10 @@ document.querySelectorAll('#oldest, #newest').forEach(el => {
 const player = document.getElementById('player');
 const mainStream = player.dataset.streamMain;
 const subStream = player.dataset.streamSub;
+// The main stream is H.265: watching it live means go2rtc is QSV-transcoding
+// to H.264 for the browser. Used to flag "transcode" in the mode label.
+const mainHevc = player.dataset.mainHevc === '1';
+const isTranscoded = stream => stream === mainStream && mainHevc;
 
 // Live view defaults to the substream: it is far lighter and plays smoothly,
 // where a full-resolution main stream (e.g. a 6 MP fisheye) can overwhelm the
@@ -177,6 +189,7 @@ const liveOptions = {
   status: document.getElementById('status'),
   modeLabel: document.getElementById('mode-label'),
   audio: false,
+  transcoded: isTranscoded(liveStream),
 };
 startLive(liveOptions);
 
@@ -218,9 +231,32 @@ const audioBtn = document.getElementById('audio-btn');
 audioBtn.addEventListener('click', () => {
   const on = !liveOptions.audio;
   audioBtn.setAttribute('aria-pressed', String(on));
-  audioBtn.textContent = on ? '🔊 Audio on' : '🔇 Audio off';
+  audioBtn.classList.toggle('btn-primary', on);
   setLiveAudio(liveOptions, on);
 });
+
+// Quality switch: swap the live view between the sub (SD) and main (HD) stream
+// live, without a page reload. startLive supersedes the prior session and
+// carries the current audio state across in liveOptions.
+const qualitySwitch = document.getElementById('quality-switch');
+if (qualitySwitch) {
+  const markActive = () => {
+    const cur = liveOptions.stream === mainStream ? 'main' : 'sub';
+    qualitySwitch.querySelectorAll('[data-q]').forEach(b =>
+      b.classList.toggle('active', b.dataset.q === cur));
+  };
+  markActive();
+  qualitySwitch.addEventListener('click', event => {
+    const b = event.target.closest('[data-q]');
+    if (!b) return;
+    const next = b.dataset.q === 'main' ? mainStream : subStream;
+    if (!next || next === liveOptions.stream) return;
+    liveOptions.stream = next;
+    liveOptions.transcoded = isTranscoded(next);
+    startLive(liveOptions);
+    markActive();
+  });
+}
 
 document.getElementById('fullscreen-btn').addEventListener('click', () => {
   if (document.fullscreenElement) document.exitFullscreen();

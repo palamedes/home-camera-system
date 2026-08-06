@@ -99,9 +99,12 @@
   <script>
     const wall = document.getElementById('wall');
 
-    // Choose a column count that leaves the fewest empty cells, breaking ties
-    // toward cells closest to a 16:9 shape. A full-bleed grid never leaves
-    // gaps, so this is purely about making the tiles look their best.
+    // Choose the column count whose resulting tiles land closest to a 16:9
+    // camera shape. Keeping tiles in the right aspect ratio is what matters on
+    // a wall, so that dominates the score; a few empty cells are a small price
+    // (3 cameras look far better as a 2x2 with one gap than as three stretched
+    // full-width bars). Ties nudge toward landscape layouts, which read best on
+    // a widescreen display.
     function layout() {
       const n = wall.children.length;
       if (!n) return;
@@ -110,10 +113,11 @@
       let best = null;
       for (let cols = 1; cols <= n; cols++) {
         const rows = Math.ceil(n / cols);
-        const empty = rows * cols - n;
+        const cells = rows * cols;
+        const emptyFrac = (cells - n) / cells;
         const cellAspect = (W / cols) / (H / rows);
         const aspectErr = Math.abs(Math.log(cellAspect / target));
-        const score = empty * 1.5 + aspectErr;
+        const score = aspectErr + emptyFrac * 0.5 + (rows > cols ? 0.01 : 0);
         if (!best || score < best.score) best = { cols, rows, score };
       }
       wall.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;

@@ -127,8 +127,19 @@ async function startLive(options, attempt = 0) {
     const pc = await tryWebRTC(options);
     if (stale()) { try { pc.close(); } catch (_) {} return; }
     options._pc = pc;
-    if (modeLabel) modeLabel.textContent = options.audio ? 'WebRTC + audio' : 'WebRTC';
+    if (modeLabel) {
+      // Flag when go2rtc is transcoding (HD on an H.265 camera) so the iGPU
+      // cost is visible; plain passthrough just reads "WebRTC".
+      const base = options.transcoded ? 'WebRTC · HD transcode' : 'WebRTC';
+      modeLabel.textContent = options.audio ? base + ' + audio' : base;
+    }
     status.classList.add('hidden');
+    // Undo any prior MJPEG fallback: a previous attempt on another stream may
+    // have hidden the <video> and shown the <img>. Without this, a successful
+    // reconnect (e.g. switching SD/HD) plays into a hidden element behind the
+    // dead fallback image — a black screen.
+    if (options.video) options.video.hidden = false;
+    if (options.fallback) { options.fallback.hidden = true; options.fallback.removeAttribute('src'); }
 
     // Keep a working stream alive through transient blips. WebRTC routinely
     // flips connected -> disconnected -> connected on its own (ICE consent

@@ -36,14 +36,14 @@
 
   function paintLight() {
     if (lightOn === null) return;
+    // Label stays "💡 Light"; the on/off state shows as the button colour
+    // (btn-primary) and aria-pressed, matching the audio button.
     lightBtn.setAttribute('aria-pressed', String(lightOn));
     lightBtn.classList.toggle('btn-primary', lightOn);
-    lightBtn.textContent = lightOn ? '💡 Light on' : '💡 Light off';
   }
 
   function paintMode(mode) {
-    [...nvMode.children].forEach(b =>
-      b.classList.toggle('active', b.dataset.mode === mode));
+    nvMode.value = mode;
   }
 
   // Apply a controls payload {light, night_vision:{mode, ir}} to the UI.
@@ -116,10 +116,8 @@
     post('light', { on: next }, [lightBtn], next ? 'Turning on…' : 'Turning off…');
   });
 
-  nvMode.addEventListener('click', e => {
-    const b = e.target.closest('[data-mode]');
-    if (!b) return;
-    post('nightvision', { mode: b.dataset.mode }, [...nvMode.children], 'Setting mode…');
+  nvMode.addEventListener('change', () => {
+    post('nightvision', { mode: nvMode.value }, [nvMode], 'Setting mode…');
   });
 
   nvIr.addEventListener('change', () => {
