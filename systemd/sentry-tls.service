@@ -1,0 +1,26 @@
+[Unit]
+Description=Sentry NVR — Caddy HTTPS front
+Documentation=https://github.com/palamedes/home-camera-system
+# Only useful once Sentry itself is up to proxy to.
+After=network-online.target sentry-nvr.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Binds :443. That is a privileged port, but the same
+# net.ipv4.ip_unprivileged_port_start=80 sysctl that lets Sentry bind :80 also
+# covers 443, so this runs fine as a user service.
+ExecStart=caddy run --config %h/Cameras/deploy/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=5
+
+# Caddy keeps its local CA and issued certs under here; persisting it means the
+# root certificate you trusted on your devices stays valid across restarts.
+Environment=XDG_DATA_HOME=%h/.local/share
+Environment=XDG_CONFIG_HOME=%h/.config
+
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

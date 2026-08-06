@@ -145,6 +145,45 @@ Because systemd owns the process group, `restart` cleanly reclaims port 80 —
 no more hunting an orphaned process that kept holding the socket after a manual
 kill.
 
+### HTTPS (needed for the microphone / two-way Talk)
+
+Browsers only grant microphone access in a *secure context* — HTTPS or
+localhost. Over plain `http://home.local` the **Talk** button is blocked by the
+browser (nothing Sentry can change). Listening to camera audio and everything
+else work fine over HTTP; only pushing your mic to a camera needs HTTPS.
+
+`home.local` is an mDNS name, so a public CA (Let's Encrypt) cannot issue a
+certificate for it. The fix is a small [Caddy](https://caddyserver.com) reverse
+proxy with its own local CA, added *alongside* Sentry — Sentry keeps serving
+plain HTTP on `:80` unchanged, Caddy adds HTTPS on `:443`:
+
+```bash
+sudo pacman -S caddy                       # or your distro's package
+cp systemd/sentry-tls.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sentry-tls
+```
+
+The proxy config is `deploy/Caddyfile`. `:443` is privileged, but the same
+`ip_unprivileged_port_start=80` sysctl that lets Sentry bind `:80` covers it,
+so Caddy runs as a user service too. `http://home.local` keeps working; migrate
+to `https://home.local` when you're ready.
+
+**Trust the CA once per device.** Caddy signs `home.local` with a local CA
+whose root is at `~/.local/share/caddy/pki/authorities/local/root.crt`. Until a
+device trusts it, `https://home.local` shows a warning and the mic still won't
+work. Copy that file to each device and install it:
+
+- **iPhone/iPad** — get the `.crt` onto the device (email it to yourself or
+  AirDrop from a Mac), then Settings → General → **VPN & Device Management** →
+  install the profile → **also** Settings → General → About → **Certificate
+  Trust Settings** → enable full trust for "Caddy Local Authority". (Both steps
+  are required — installing without enabling full trust is the usual gotcha.)
+- **Mac** — double-click the `.crt`, add it to the **System** keychain, then in
+  Keychain Access set it to **Always Trust**.
+
+After that `https://home.local` shows a valid lock and Talk works.
+
 ## Forgot your password
 
 Recovery needs shell access to the box — there is no email reset, because

@@ -1,0 +1,27 @@
+# Sentry NVR — HTTPS front for home.local
+#
+# Purpose: the browser only grants microphone access (two-way Talk) on a
+# "secure context" — HTTPS or localhost. Plain http://home.local is not one,
+# so Talk is blocked there. This puts a TLS front on the same hostname.
+#
+# .local is an mDNS name, so a public CA (Let's Encrypt) cannot issue for it.
+# `tls internal` uses Caddy's own local CA instead; you install & trust that
+# CA's root certificate on each device once (see README → Running it as a
+# service → HTTPS). After that, https://home.local shows a valid lock.
+#
+# This is ADDITIVE: Sentry keeps serving plain HTTP on :80 unchanged. Caddy
+# only takes :443 and reverse-proxies to Sentry on loopback, so
+#   http://home.local   -> Sentry directly   (still works)
+#   https://home.local  -> Caddy -> Sentry    (Talk works here)
+{
+	# Sentry owns :80, so Caddy must NOT try to bind it for ACME/redirects.
+	auto_https disable_redirects
+}
+
+# Forcing the https:// scheme pins this site to :443 only.
+https://home.local {
+	tls internal
+	# Tell Sentry the original request was HTTPS (X-Forwarded-Proto) so it can
+	# treat the connection as secure. Caddy sets these headers by default.
+	reverse_proxy 127.0.0.1:80
+}
