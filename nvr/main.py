@@ -811,6 +811,53 @@ async def api_update_camera(camera_id: str, request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.post("/api/cameras/{camera_id}/relink")
+async def api_relink_camera(camera_id: str, request: Request):
+    """Point an existing camera at a new IP/host without losing anything.
+
+    A camera that moves (DHCP change, wired<->WiFi — a different MAC and IP) is
+    the same device with the same stream paths and credentials; only its address
+    changed. Swap the host into the stored URLs and re-probe to confirm, keeping
+    the camera's id — so its name, virtual cameras, schedules, and recordings all
+    stay attached. This is the "re-link" the Add-camera flow is not.
+    """
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    payload = await request.json()
+    new_host = (payload.get("host") or "").strip()
+    if not new_host:
+        return JSONResponse({"error": "host is required"}, status_code=400)
+
+    camera = dict(camera)
+
+    def swap_host(url: str | None) -> str | None:
+        # Replace the host in rtsp://[user:pass@]HOST[:port]/path, leaving the
+        # credentials, port and stream path exactly as they were.
+        if not url:
+            return url
+        # Userinfo may itself contain '@' (passwords do), so match all of it up
+        # to the LAST '@' before the path, then the host up to :port or /path.
+        return re.sub(r"(rtsp://(?:[^/]*@)?)[^:/@]+", r"\g<1>" + new_host, url, count=1)
+
+    new_main = swap_host(camera["main_url"])
+    new_sub = swap_host(camera["sub_url"])
+
+    # Verify the camera actually answers at the new address before committing —
+    # otherwise we'd point a healthy camera at a dead one.
+    check = streams.probe_rtsp(new_main)
+    if not check.get("ok"):
+        return JSONResponse(
+            {"error": f"No camera stream at {new_host}: {check.get('error')}"},
+            status_code=400,
+        )
+
+    db.update_camera(camera_id, host=new_host, main_url=new_main, sub_url=new_sub)
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse({"ok": True, "host": new_host})
+
+
 @app.delete("/api/cameras/{camera_id}")
 def api_delete_camera(camera_id: str, purge: bool = False):
     if not db.camera(camera_id):

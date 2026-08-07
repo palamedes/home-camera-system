@@ -386,6 +386,23 @@
         </section>
 
         <section class="cam-section">
+          <div class="cam-section-label">Connection</div>
+          <div class="cam-row">
+            <span class="muted small">Address: <span class="mono" data-cam-host>{{ camera.host }}</span></span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" data-relink-scan
+                    title="Point this camera at a new IP (e.g. after it moved to WiFi or got a new DHCP lease) without losing its name, virtual cameras, schedules or recordings.">Change IP…</button>
+          </div>
+          <div class="cam-row" data-relink-panel hidden>
+            <select class="rec-select" data-relink-select><option value="">Scanning…</option></select>
+            <input type="text" class="rec-select" data-relink-manual
+                   placeholder="…or type an IP" style="max-width: 150px">
+            <button class="btn btn-sm btn-primary" data-relink-apply>Re-link</button>
+            <span class="muted small" data-relink-status role="status" aria-live="polite"></span>
+          </div>
+        </section>
+
+        <section class="cam-section">
           <div class="cam-section-label">Recording</div>
           <div class="cam-row">
             <div class="setting">
@@ -882,6 +899,66 @@ document.querySelectorAll('select[data-record-select]').forEach(select => {
       if (!r.ok) select.value = original;
     } catch { select.value = original; }
     finally { select.disabled = false; }
+  });
+});
+
+// Re-link: point an existing camera at a new IP without recreating it (keeps
+// its virtual cameras, schedules, recordings). Scan populates a dropdown; a
+// manual IP box covers cameras discovery misses.
+document.querySelectorAll('[data-relink-scan]').forEach(btn => {
+  const card = btn.closest('[data-camera]');
+  const panel = card.querySelector('[data-relink-panel]');
+  const select = card.querySelector('[data-relink-select]');
+  const status = card.querySelector('[data-relink-status]');
+  btn.addEventListener('click', async () => {
+    panel.hidden = false;
+    status.textContent = '';
+    select.innerHTML = '<option value="">Scanning…</option>';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/discover', { method: 'POST' });
+      const found = r.ok ? await r.json() : [];
+      select.innerHTML = found.length
+        ? '<option value="">Pick a device…</option>' + found.map(c => {
+            const label = [c.host, c.model || c.brand || 'camera', c.mac].filter(Boolean).join(' · ');
+            return `<option value="${c.host}">${label}</option>`;
+          }).join('')
+        : '<option value="">None found — type an IP</option>';
+    } catch {
+      select.innerHTML = '<option value="">Scan failed — type an IP</option>';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+});
+
+document.querySelectorAll('[data-relink-apply]').forEach(btn => {
+  const card = btn.closest('[data-camera]');
+  const id = card.dataset.camera;
+  const select = card.querySelector('[data-relink-select]');
+  const manual = card.querySelector('[data-relink-manual]');
+  const status = card.querySelector('[data-relink-status]');
+  const hostEl = card.querySelector('[data-cam-host]');
+  btn.addEventListener('click', async () => {
+    const host = (manual.value.trim() || select.value || '').trim();
+    if (!host) { status.textContent = 'Pick or type an IP first.'; return; }
+    btn.disabled = true;
+    status.textContent = 'Re-linking…';
+    try {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(id)}/relink`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { status.textContent = data.error || 'Re-link failed.'; return; }
+      status.textContent = 'Re-linked ✓';
+      if (hostEl) hostEl.textContent = host;
+      setTimeout(() => location.reload(), 800);
+    } catch {
+      status.textContent = 'Network error.';
+    } finally {
+      btn.disabled = false;
+    }
   });
 });
 
