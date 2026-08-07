@@ -35,6 +35,7 @@ function initReplay(opts) {
   let segStartedAt = 0;
   let mode = 'live';      // 'live' | 'replay'
   let current = null;     // segment being played in replay
+  let desired = null;     // latest requested { seg, offset }, applied when ready
 
   const now = () => Date.now() / 1000;
 
@@ -116,26 +117,38 @@ function initReplay(opts) {
     return null;
   }
 
+  // Load a segment's blob into the player, but only when it actually changes.
+  function ensureSegment(seg) {
+    if (current === seg) return;
+    current = seg;
+    video.srcObject = null;
+    video.src = seg.url;
+    try { video.load(); } catch (_) {}
+  }
+
+  // Seek to the LATEST requested position, once the right segment is decodable.
+  // A single source of truth (`desired`) plus one persistent 'loadedmetadata'
+  // listener replaces the old per-call seek listeners: dragging fast across
+  // segment boundaries used to pile up listeners, and a stale one (holding an
+  // earlier position) could fire last and win — that was the flaky rewind.
+  function applyDesired() {
+    if (mode !== 'replay' || !desired) return;
+    if (current !== desired.seg || video.readyState < 1) return;  // not ready yet
+    try { video.currentTime = desired.offset; } catch (_) {}
+    video.play().catch(() => {});
+  }
+
   function replayAt(t) {
     const seg = segmentAt(t);
     if (!seg) { goLive(); return; }
     mode = 'replay';
     label.classList.add('rewound');
-    if (current !== seg) {
-      current = seg;
-      video.srcObject = null;
-      video.src = seg.url;
-      const seek = () => {
-        video.currentTime = Math.max(0, Math.min(seg.end - seg.start - 0.05, t - seg.start));
-        video.play().catch(() => {});
-        video.removeEventListener('loadedmetadata', seek);
-      };
-      video.addEventListener('loadedmetadata', seek);
-      try { video.load(); } catch (_) {}
-    } else {
-      try { video.currentTime = Math.max(0, t - seg.start); } catch (_) {}
-    }
+    desired = { seg, offset: Math.max(0, Math.min(seg.end - seg.start - 0.05, t - seg.start)) };
+    ensureSegment(seg);
+    applyDesired();
   }
+
+  video.addEventListener('loadedmetadata', applyDesired);
 
   scrub.addEventListener('input', () => {
     const behind = WINDOW - Number(scrub.value);
