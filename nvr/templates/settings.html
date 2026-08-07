@@ -48,7 +48,7 @@
 <!-- ========================= RECORDINGS POOL ======================= -->
 <div class="panel" data-tab="storage" style="margin-bottom: 26px;">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-    <h2 style="margin: 0; font-size: 16px;">Recordings pool</h2>
+    <h2 style="margin: 0; font-size: 16px;" data-help="storage.pool">Recordings pool</h2>
     <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
       <span class="small" data-form-result="volumes"></span>
       <button class="btn btn-sm" type="button" id="volume-add">Add volume</button>
@@ -59,7 +59,7 @@
     <div id="volume-list" class="volume-list"><div class="muted small">Loading…</div></div>
     <p class="muted small" style="margin: 12px 0 0;">Footage fills volumes top to bottom: when one reaches its cap, new recordings overflow to the next. Point volumes at mounted drives or a NAS (e.g. <span class="mono">/mnt/nas/sentry</span>) — mount at the OS level first (fstab). Cap is a percent of that drive (<span class="mono">80%</span>) or a size (<span class="mono">400G</span>). Existing footage keeps playing wherever it already lives.</p>
     <div style="border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px;">
-      <div class="set-label">Move stranded footage</div>
+      <div class="set-label" data-help="storage.migrate">Move stranded footage</div>
       <div class="row" style="gap: 10px; align-items: center;">
         <button type="button" class="btn btn-sm" id="storage-migrate">Move stranded footage now</button>
         <span class="small muted" id="storage-migrate-status">Consolidates footage on drives you removed from the pool back onto the primary volume.</span>
@@ -366,7 +366,7 @@
       <div class="cam-body">
 
         <section class="cam-section">
-          <div class="cam-section-label">Camera</div>
+          <div class="cam-section-label" data-help="cameras.enabled">Camera</div>
           <div class="cam-row">
             <label class="switch" title="Take the camera online or offline. Offline stops streaming and recording until you switch it back on.">
               <input type="checkbox" data-enabled-toggle {{ 'checked' if camera.enabled }}>
@@ -386,7 +386,7 @@
         </section>
 
         <section class="cam-section">
-          <div class="cam-section-label">Connection</div>
+          <div class="cam-section-label" data-help="cameras.connection">Connection</div>
           <div class="cam-row">
             <span class="muted small">Address: <span class="mono" data-cam-host>{{ camera.host }}</span></span>
             <span class="spacer"></span>
@@ -406,7 +406,7 @@
           <div class="cam-section-label">Recording</div>
           <div class="cam-row">
             <div class="setting">
-              <label for="rec-{{ camera.id }}">Recording</label>
+              <label for="rec-{{ camera.id }}" data-help="cameras.recording">Recording</label>
               <select id="rec-{{ camera.id }}" data-record-select class="rec-select">
                 <option value="on"  {{ 'selected' if camera.record and not camera.record_until }}>On</option>
                 <option value="off" {{ 'selected' if not camera.record }}>Off</option>
@@ -422,14 +422,14 @@
               </select>
             </div>
             <div class="setting" data-streams{% if camera.brand %} data-brand="{{ camera.brand }}"{% endif %}>
-              <label for="strm-{{ camera.id }}">Record stream</label>
+              <label for="strm-{{ camera.id }}" data-help="cameras.record_stream">Record stream</label>
               <select id="strm-{{ camera.id }}" data-record-stream class="rec-select">
                 <option value="main" {{ 'selected' if camera.record_stream != 'sub' }}>Main</option>
                 <option value="sub" {{ 'selected' if camera.record_stream == 'sub' }}{{ ' disabled' if not camera.sub_url }}>Sub</option>
               </select>
             </div>
             <div class="setting">
-              <label for="roll-{{ camera.id }}" title="How much recent footage to keep while recording. Anchored to the newest clip, so if recording stops the last window is held (not deleted on a clock) until the 'delete after' cap.">Rolling keep</label>
+              <label for="roll-{{ camera.id }}" title="How much recent footage to keep while recording. Anchored to the newest clip, so if recording stops the last window is held (not deleted on a clock) until the 'delete after' cap." data-help="cameras.rolling_keep">Rolling keep</label>
               <select id="roll-{{ camera.id }}" data-rolling class="rec-select">
                 <option value="" {{ 'selected' if not camera.rolling_keep_seconds }}>None</option>
                 {% for value, text in retentions %}
@@ -438,7 +438,7 @@
               </select>
             </div>
             <div class="setting">
-              <label for="ret-{{ camera.id }}" title="Footage older than this is deleted no matter how much free space there is">Delete after (max)</label>
+              <label for="ret-{{ camera.id }}" title="Footage older than this is deleted no matter how much free space there is" data-help="cameras.retention">Delete after (max)</label>
               <select id="ret-{{ camera.id }}" data-retention data-default-days="{{ storage.max_age_days }}" class="rec-select">
                 <option value="" {{ 'selected' if camera.retention_seconds is none }}>Default ({{ storage.max_age_days }}d)</option>
                 {% for value, text in retentions %}
@@ -448,7 +448,7 @@
               </select>
             </div>
             <div class="setting est">
-              <label title="Rough disk use at the current stream's bitrate if footage is kept for the whole 'delete after' window">Est. storage</label>
+              <label title="Rough disk use at the current stream's bitrate if footage is kept for the whole 'delete after' window" data-help="cameras.est_storage">Est. storage</label>
               <span class="est-val" data-storage-est>&mdash;</span>
             </div>
           </div>
@@ -460,21 +460,21 @@
           <div class="cam-row">
             <div class="checkbox">
               <input type="checkbox" id="fish-{{ camera.id }}" data-toggle="fisheye" {{ 'checked' if camera.fisheye }}>
-              <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera">360°</label>
+              <label for="fish-{{ camera.id }}" title="Treat as a 360°/fisheye camera" data-help="cameras.fisheye">360°</label>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="grid-{{ camera.id }}" data-toggle="show_on_grid" {{ 'checked' if camera.show_on_grid }}>
-              <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page">On grid</label>
+              <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page" data-help="cameras.show_on_grid">On grid</label>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible" {{ 'checked' if camera.viewer_visible }}>
-              <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera">Viewers</label>
+              <label for="vis-{{ camera.id }}" title="Whether viewer accounts can see this camera" data-help="cameras.viewer_visible">Viewers</label>
             </div>
           </div>
         </section>
 
         <section class="cam-section" data-sched-camera="{{ camera.id }}">
-          <div class="cam-section-label">Schedules
+          <div class="cam-section-label" data-help="cameras.schedules">Schedules
             <span class="muted small">&mdash; server local time; an end before the start wraps past midnight</span>
           </div>
           <div class="sched-list" data-sched-list>
@@ -584,7 +584,7 @@
 {% if is_admin %}
 <div class="panel" data-tab="users">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
-    <h2 style="margin: 0; font-size: 16px;">Users</h2>
+    <h2 style="margin: 0; font-size: 16px;" data-help="users.overview">Users</h2>
     <button class="btn btn-sm btn-primary" id="add-user-btn">Add user</button>
   </div>
   <div class="list" id="users-list">
@@ -593,7 +593,7 @@
       <span class="avatar">{{ u.username[:1] | upper }}</span>
       <div class="grow">
         <div class="title">{{ u.username }}{% if u.id == me_id %} <span class="muted small">(you)</span>{% endif %}</div>
-        <div class="sub">
+        <div class="sub" data-help="users.role">
           <select data-role class="rec-select" {{ 'disabled' if u.id == me_id }}>
             <option value="admin"  {{ 'selected' if u.role == 'admin' }}>Admin — full control</option>
             <option value="viewer" {{ 'selected' if u.role == 'viewer' }}>Viewer — watch only</option>

@@ -182,6 +182,25 @@
 
     'storage.recordings_dir': ['Recordings folder', 'Where continuous footage is stored', 'Directory continuous recordings are written to — point it at a mounted drive or NAS. New footage goes here immediately; existing footage stays put until you move it.'],
     'storage.clips_dir': ['Clips folder', 'Where saved clips are kept', 'Directory saved clips live in. These are kept permanently and never pruned.'],
+    'storage.pool': ['Recordings pool', 'Drives footage is stored across', 'One or more volumes recordings are written to. Footage fills them top to bottom — when one reaches its cap, new recordings overflow to the next. Point volumes at mounted drives or a NAS (mount it at the OS level first). A cap is a percent of that drive (80%) or a size (400G). Existing footage keeps playing wherever it already lives.'],
+    'storage.migrate': ['Move stranded footage', 'Consolidate off removed drives', 'Moves footage that still lives on drives you removed from the pool back onto the primary volume so it stays playable. Safe to run anytime — it only touches stranded files.'],
+
+    // ---- cameras tab (per-camera card; keys repeat across cards) ----------
+    'cameras.enabled': ['Camera on/off', 'Take the camera online or offline', 'Enables or disables the camera. Off stops all streaming and recording and hides it from live views until you switch it back on — its name, virtual cameras, schedules and existing recordings are all kept.'],
+    'cameras.connection': ['Connection', 'Re-point the camera at a new IP', 'Cameras change IP often — a new DHCP lease, a reboot, or moving between wired and WiFi. "Change IP…" re-points this camera at a newly discovered address without losing its name, virtual cameras, schedules or recordings; it just swaps the address in the stream URLs.'],
+    'cameras.recording': ['Recording', 'Continuous, off, or a timed window', 'On records continuously. Off stops recording (live view still works). The "For the next…" options record for a set window, then stop on their own.'],
+    'cameras.record_stream': ['Record stream', 'Main (HD) or sub (smaller)', 'Which stream is written to disk. Main is full quality and larger; sub is lower-resolution and uses far less space. Live view can use either regardless of this choice.'],
+    'cameras.rolling_keep': ['Rolling keep', 'Recent window always kept', "How much recent footage to always keep, anchored to the newest clip. If recording stops, that last window is held (not deleted on a clock) until the 'Delete after' cap. None means only the global/age limits apply."],
+    'cameras.retention': ['Delete after', 'Hard age cap for this camera', "Footage from this camera older than this is deleted no matter how much free space there is. Default uses the global max age; Never keeps it until the disk actually needs the space."],
+    'cameras.est_storage': ['Estimated storage', 'Rough disk use at current settings', "A rough estimate of disk use for this camera if footage is kept for the whole 'Delete after' window, at the selected stream's bitrate."],
+    'cameras.fisheye': ['360° / fisheye', 'Enable dewarp for this camera', 'Marks this as a 360°/fisheye camera so Sentry offers fisheye dewarping and virtual PTZ views for it.'],
+    'cameras.show_on_grid': ['On grid', 'Show the raw tile on dashboards', 'When on, the raw camera tile appears on the dashboard and Cameras page. Turn it off to keep only this camera’s virtual (dewarped) views on the grid.'],
+    'cameras.viewer_visible': ['Viewer visible', 'Let viewer accounts see this', 'Whether non-admin viewer accounts can see this camera. Off hides it from viewers while admins keep full access.'],
+    'cameras.schedules': ['Schedules', 'Automate by time of day', 'Automate recording, the spotlight, or night vision by time of day and weekday, using the server’s local time. An end time earlier than the start wraps past midnight.'],
+
+    // ---- users tab --------------------------------------------------------
+    'users.overview': ['Users', 'Accounts that can sign in', 'Accounts that can sign into Sentry. Admins have full control — cameras, settings and other users; viewers can only watch the cameras marked viewer-visible. Use "Add user" to create one, "Reset password" to set a new one, and the × to remove one.'],
+    'users.role': ['Role', 'Admin or viewer', 'Admin — full control, can manage cameras, settings and users. Viewer — can only watch cameras marked viewer-visible. You can’t change your own role.'],
   };
 
   function initHelp() {
@@ -229,14 +248,7 @@
       return null;
     }
 
-    document.querySelectorAll('.set-field').forEach((field) => {
-      const section = sectionFor(field);
-      if (!section) return;
-      const key = keyFor(field, section);
-      const entry = key && HELP[key];
-      if (!entry) return;
-      const label = field.querySelector('.set-label');
-      if (!label || label.querySelector('.help-btn')) return;
+    function makeHelpBtn(entry) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'help-btn';
@@ -249,7 +261,29 @@
         e.stopPropagation();
         open(entry);
       });
-      label.appendChild(btn);
+      return btn;
+    }
+
+    // Structured forms (weather / alerts / network / storage limits) resolve
+    // their section+key from the .set-field markup.
+    document.querySelectorAll('.set-field').forEach((field) => {
+      const section = sectionFor(field);
+      if (!section) return;
+      const key = keyFor(field, section);
+      const entry = key && HELP[key];
+      if (!entry) return;
+      const label = field.querySelector('.set-label');
+      if (!label || label.querySelector('.help-btn')) return;
+      label.appendChild(makeHelpBtn(entry));
+    });
+
+    // Cameras / users / storage-pool use their own card markup, so those
+    // labels carry an explicit data-help="section.key" instead. Keys repeat
+    // across per-camera cards — every occurrence gets its own ? button.
+    document.querySelectorAll('[data-help]').forEach((el) => {
+      const entry = HELP[el.dataset.help];
+      if (!entry || el.querySelector('.help-btn')) return;
+      el.appendChild(makeHelpBtn(entry));
     });
   }
 
