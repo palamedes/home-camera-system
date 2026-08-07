@@ -814,15 +814,18 @@ async def api_update_camera(camera_id: str, request: Request):
 def _reolink_devinfo(host: str, user: str, pw: str) -> dict | None:
     """A Reolink camera's configured name + model, or None. Needs credentials —
     which is why only the re-link scan (per camera) can fill these in, not the
-    credential-less discovery."""
+    credential-less discovery. Retried once: a single login can time out when
+    the camera is busy mid-scan, which otherwise left some devices unlabelled."""
     from . import reolink
-    try:
-        with reolink.ReolinkClient(host, user, pw, timeout=3.0) as client:
-            client.login()
-            data = client._call([{"cmd": "GetDevInfo", "action": 0, "param": {}}])
-            return data[0]["value"]["DevInfo"]
-    except Exception:
-        return None
+    for _ in range(2):
+        try:
+            with reolink.ReolinkClient(host, user, pw, timeout=6.0) as client:
+                client.login()
+                data = client._call([{"cmd": "GetDevInfo", "action": 0, "param": {}}])
+                return data[0]["value"]["DevInfo"]
+        except Exception:
+            continue
+    return None
 
 
 @app.post("/api/cameras/{camera_id}/relink-scan")
