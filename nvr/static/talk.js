@@ -142,6 +142,16 @@
     // 2) WebRTC offer: one sendonly mic track, POSTed through the proxy.
     try {
       pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+      // go2rtc only bridges the mic into the camera's RTSP backchannel when the
+      // mic rides on a connection that is ALSO consuming the stream — exactly
+      // what go2rtc's own web client does (video,audio,microphone on one peer
+      // connection). A mic-only sendonly connection makes go2rtc open the
+      // backchannel but never attach our audio to it (the stream shows
+      // consumers: null). So consume the stream's video+audio (recvonly, which
+      // we just discard) alongside the sendonly mic. Our <camera>_talk stream is
+      // the sub stream + #backchannel=1, so it carries all three.
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
       micStream.getTracks().forEach(track => {
         const transceiver = pc.addTransceiver(track, { direction: 'sendonly' });
         preferG711(transceiver);
