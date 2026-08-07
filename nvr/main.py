@@ -1697,6 +1697,41 @@ async def api_save_clip(
     return JSONResponse({"id": clip_id, "redirect": "/clips"})
 
 
+@app.post("/api/cameras/{camera_id}/save-clip")
+def api_save_clip_server(request: Request, camera_id: str,
+                         start: float, duration: float, name: str = ""):
+    """Export a time range from the server recording and save it to the clips
+    library. This is the reliable path for a normal camera — an exact ffmpeg cut
+    of the footage, not a real-time browser re-record (which dropped frames,
+    ran short, and desynced audio). Dewarped virtual cameras still capture in the
+    browser via POST /api/clips, since the dewarp only exists there.
+    """
+    import shutil
+
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    duration = max(1.0, min(duration, 7200.0))
+    try:
+        tmp = playback.export_clip(db, cfg, camera_id, start, duration)
+    except FileNotFoundError:
+        return JSONResponse({"error": "no footage for that time"}, status_code=404)
+    except RuntimeError as exc:
+        return JSONResponse({"error": f"export failed: {exc}"}, status_code=500)
+
+    dest = cfg.storage.clips_dir / f"{slugify(camera_id)}-{int(time.time())}.mp4"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(tmp), str(dest))
+    shutil.rmtree(tmp.parent, ignore_errors=True)
+
+    clip_id = db.add_clip(
+        camera_id=camera_id, name=(name.strip() or "Clip"), path=str(dest),
+        mime="video/mp4", size=dest.stat().st_size,
+        start_ts=start, duration=duration,
+    )
+    return JSONResponse({"id": clip_id, "redirect": "/clips"})
+
+
 @app.get("/api/clips/{clip_id}/file")
 def api_clip_file(clip_id: int, request: Request):
     clip = db.clip(clip_id)

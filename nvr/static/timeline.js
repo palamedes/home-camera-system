@@ -494,7 +494,33 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     }
   }
 
-  document.getElementById('selection-save').addEventListener('click', () => captureClip(false));
+  document.getElementById('selection-save').addEventListener('click', async () => {
+    if (!selection) return;
+    // Dewarped virtual camera: only the browser has the rendered frames, so
+    // capture there. A normal camera saves an exact server-side ffmpeg cut —
+    // no real-time re-record (which dropped frames, ran short, desynced audio).
+    if (vcamId != null) { captureClip(false); return; }
+    const start = Math.floor(selection.start);
+    const duration = Math.max(1, Math.round(selection.end - selection.start));
+    const stamp = new Date(start * 1000).toLocaleString([], {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
+    });
+    const label = document.getElementById('selection-label');
+    const restore = label.textContent;
+    label.textContent = '● Saving clip…';
+    try {
+      const r = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/save-clip`
+        + `?start=${start}&duration=${duration}&name=${encodeURIComponent(stamp)}`,
+        { method: 'POST' });
+      if (r.ok) {
+        if (confirm('Clip saved. View your clips now?')) location.href = '/clips';
+      } else {
+        const d = await r.json().catch(() => ({}));
+        alert(d.error || 'Could not save the clip.');
+      }
+    } catch { alert('Could not save the clip.'); }
+    finally { label.textContent = restore; }
+  });
   document.getElementById('selection-export').addEventListener('click', () => {
     if (!selection) return;
     if (vcamId != null) {
