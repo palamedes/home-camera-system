@@ -30,6 +30,15 @@ function initReplay(opts) {
   const supported = typeof MediaRecorder !== 'undefined' && scrub && label;
   if (!supported) { if (container) container.hidden = true; return null; }
 
+  // Hide the scrubber until the buffer has actually recorded something (~2s
+  // after the stream connects). Grabbing it before then does nothing, which
+  // reads as broken; revealed on the first segment.
+  if (container) container.hidden = true;
+  let revealed = false;
+  function reveal() {
+    if (!revealed && container) { revealed = true; container.hidden = false; }
+  }
+
   // The player has a fixed CSS height (.player-fixed), so swapping the <video>
   // source during replay can't collapse the box — no runtime size juggling.
   const mime = ['video/webm;codecs=vp8', 'video/webm', 'video/mp4']
@@ -78,6 +87,7 @@ function initReplay(opts) {
         const blob = new Blob(chunks, { type: rec.mimeType || mime });
         segments.push({ start, end: now(), url: URL.createObjectURL(blob) });
         prune();
+        reveal();   // buffer now has scrubbable footage — show the bar
       }
     };
     try { rec.start(); } catch (_) { if (container) container.hidden = true; return; }
