@@ -201,6 +201,7 @@ const replay = initReplay({
   scrub: document.getElementById('replay-scrub'),
   label: document.getElementById('replay-label'),
   container: document.getElementById('replay'),
+  cameraId: {{ camera.id | tojson }},
 });
 
 // Presence heartbeat: tell the server this session is watching (and whether
