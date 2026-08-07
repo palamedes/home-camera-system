@@ -22,7 +22,8 @@
 
 function initReplay(opts) {
   const { video, scrub, label, container, cameraId } = opts;
-  const SEG_SECONDS = 12;
+  const SEG_SECONDS = 4;      // short segments -> the buffer's live edge is only
+                              // ~4s behind, and it warms in ~4s after page load
   const KEEP_SECONDS = 210;   // retain ~3.5 min of segments
   const WINDOW = Number(scrub && scrub.max) || 180;
 
@@ -151,6 +152,13 @@ function initReplay(opts) {
   }
 
   function replayAt(t) {
+    // Never ask for footage newer than the buffer's newest closed segment: that
+    // moment is still being recorded (no blob yet) and the server lags further,
+    // so it would just hang on a black frame. Clamp to what's actually there.
+    if (segments.length) {
+      const newest = segments[segments.length - 1].end;
+      if (t > newest) t = newest - 0.05;
+    }
     const seg = segmentAt(t);
     if (seg) {
       // In the browser buffer: precise, instant seeking of the recent window.
@@ -187,15 +195,21 @@ function initReplay(opts) {
     video.srcObject = null;
     video.src = `/api/cameras/${encodeURIComponent(cameraId)}/playback.mp4`
       + `?start=${Math.floor(t)}&duration=${dur}`;
+    // Server footage is transcoded on demand (4K H.265 -> H.264 can take a
+    // couple seconds to start), so show it's working instead of a mystery black
+    // frame. timeupdate replaces this the moment footage actually plays.
+    label.textContent = '⏳';
     try { video.load(); } catch (_) {}
     video.play().catch(() => {});
   }
 
   video.addEventListener('loadedmetadata', applyDesired);
 
-  // Server chunk had no footage (e.g. a target inside the recorder's lag window).
+  // A server chunk with no footage (target inside the recorder's lag window, or
+  // older than retention) errors instead of ever delivering a frame. Don't hang
+  // on black — snap back to live.
   video.addEventListener('error', () => {
-    if (mode === 'server') label.textContent = 'no footage';
+    if (mode === 'server') { goLive(); scrub.value = WINDOW; }
   });
 
   scrub.addEventListener('input', () => {
