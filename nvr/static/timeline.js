@@ -38,6 +38,7 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   let chunkStart = null;      // epoch seconds of the loaded chunk
   let hoverX = null;
   let selection = null;       // { start, end } epoch seconds, for export
+  let savingClip = false;     // lock the UI while a server-side clip export runs
 
   const windowStart = () => windowEnd - windowSpan;
 
@@ -295,6 +296,7 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   }
 
   canvas.addEventListener('pointerdown', event => {
+    if (savingClip) return;   // don't seek/re-select while a clip export is running
     press = {
       x: localX(event), time: xToTime(localX(event)),
       dragging: false, scrub: isScrubKey(event),
@@ -495,7 +497,7 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   }
 
   document.getElementById('selection-save').addEventListener('click', async () => {
-    if (!selection) return;
+    if (!selection || savingClip) return;
     // Dewarped virtual camera: only the browser has the rendered frames, so
     // capture there. A normal camera saves an exact server-side ffmpeg cut —
     // no real-time re-record (which dropped frames, ran short, desynced audio).
@@ -506,7 +508,12 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
     });
     const label = document.getElementById('selection-label');
+    const buttons = selectionBar.querySelectorAll('button');
     const restore = label.textContent;
+    // Lock the selection bar (Clear / Save / Export) and the timeline while the
+    // export runs, so nothing can be changed mid-save.
+    savingClip = true;
+    buttons.forEach(b => { b.disabled = true; });
     label.textContent = '● Saving clip…';
     try {
       const r = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/save-clip`
@@ -519,7 +526,11 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
         alert(d.error || 'Could not save the clip.');
       }
     } catch { alert('Could not save the clip.'); }
-    finally { label.textContent = restore; }
+    finally {
+      savingClip = false;
+      buttons.forEach(b => { b.disabled = false; });
+      label.textContent = restore;
+    }
   });
   document.getElementById('selection-export').addEventListener('click', () => {
     if (!selection) return;
