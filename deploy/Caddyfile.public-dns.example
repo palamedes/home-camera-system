@@ -29,6 +29,13 @@
 #      in, chmod 600, and point sentry-tls.service at this file + that env file.
 #   5. Open ufw 443 if you run a firewall (see README).
 
+{
+	# Sentry owns :80 (it still serves plain HTTP there), so Caddy must NOT try
+	# to bind :80 for the automatic HTTP->HTTPS redirect — that would fail with
+	# "address already in use". Clients use the https:// URL directly.
+	auto_https disable_redirects
+}
+
 {$SENTRY_DOMAIN} {
 	tls {
 		# Swap "namecheap" for your provider's module if different. The values
@@ -37,6 +44,10 @@
 			api_key {env.NAMECHEAP_API_KEY}
 			user {env.NAMECHEAP_API_USER}
 		}
+		# Resolve the ACME challenge via public DNS, not the LAN router. Many
+		# home routers (e.g. Netgear Orbi) SERVFAIL or mangle lookups in a zone
+		# that points at a private IP, which breaks DNS-01 zone detection.
+		resolvers 1.1.1.1 8.8.8.8
 	}
 	# Terminate TLS here; hand the plain request to Sentry on loopback :80.
 	reverse_proxy 127.0.0.1:80
