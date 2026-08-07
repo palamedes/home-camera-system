@@ -910,17 +910,19 @@ document.querySelectorAll('[data-relink-scan]').forEach(btn => {
   const panel = card.querySelector('[data-relink-panel]');
   const select = card.querySelector('[data-relink-select]');
   const status = card.querySelector('[data-relink-status]');
+  const id = card.dataset.camera;
   btn.addEventListener('click', async () => {
     panel.hidden = false;
-    status.textContent = '';
+    status.textContent = 'Scanning (reading names may take a few seconds)…';
     select.innerHTML = '<option value="">Scanning…</option>';
     btn.disabled = true;
     try {
-      const r = await fetch('/api/discover', { method: 'POST' });
+      const r = await fetch(`/api/cameras/${encodeURIComponent(id)}/relink-scan`, { method: 'POST' });
       const found = r.ok ? await r.json() : [];
+      status.textContent = '';
       select.innerHTML = found.length
         ? '<option value="">Pick a device…</option>' + found.map(c => {
-            const label = [c.host, c.model || c.brand || 'camera', c.mac].filter(Boolean).join(' · ');
+            const label = [c.host, c.name, c.model || c.brand, c.mac].filter(Boolean).join(' · ');
             return `<option value="${c.host}">${label}</option>`;
           }).join('')
         : '<option value="">None found — type an IP</option>';

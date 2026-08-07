@@ -811,6 +811,48 @@ async def api_update_camera(camera_id: str, request: Request):
     return JSONResponse({"ok": True})
 
 
+def _reolink_devinfo(host: str, user: str, pw: str) -> dict | None:
+    """A Reolink camera's configured name + model, or None. Needs credentials —
+    which is why only the re-link scan (per camera) can fill these in, not the
+    credential-less discovery."""
+    from . import reolink
+    try:
+        with reolink.ReolinkClient(host, user, pw, timeout=3.0) as client:
+            client.login()
+            data = client._call([{"cmd": "GetDevInfo", "action": 0, "param": {}}])
+            return data[0]["value"]["DevInfo"]
+    except Exception:
+        return None
+
+
+@app.post("/api/cameras/{camera_id}/relink-scan")
+def api_relink_scan(camera_id: str):
+    """Discovery for the re-link picker, enriched with each Reolink device's
+    configured name + model (via this camera's credentials) so the list reads
+    like the router's — IP, name, model, MAC — not just IP + brand + MAC."""
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    camera = dict(camera)
+    user, pw = camera.get("username") or "", camera.get("password") or ""
+    found = discovery.discover(
+        subnets=cfg.discovery.subnets or None,
+        timeout=cfg.discovery.timeout,
+        onvif_wait=cfg.discovery.onvif_wait,
+        known_hosts={},
+    )
+    out = []
+    for candidate in found:
+        item = candidate.to_dict()
+        if user and item.get("brand") == "reolink":
+            info = _reolink_devinfo(item["host"], user, pw)
+            if info:
+                item["name"] = info.get("name") or item.get("name")
+                item["model"] = info.get("model") or item.get("model")
+        out.append(item)
+    return JSONResponse(out)
+
+
 @app.post("/api/cameras/{camera_id}/relink")
 async def api_relink_camera(camera_id: str, request: Request):
     """Point an existing camera at a new IP/host without losing anything.
