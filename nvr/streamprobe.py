@@ -204,3 +204,63 @@ def describe_streams(camera: dict[str, Any], cfg: Any) -> dict[str, Any]:
             cfg.go2rtc.local_rtsp(streams_mod.sub_stream_name(camera["id"]))
         )
     return out
+
+
+# --- two-way-audio (backchannel) capability -------------------------------
+
+import hashlib as _hashlib
+import re as _re
+import socket as _socket
+
+
+def backchannel_supported(url: str, timeout: float = 4.0) -> bool | None:
+    """Whether an RTSP camera advertises a two-way-audio backchannel.
+
+    Sends a DESCRIBE with the ONVIF backchannel Require header and looks for an
+    audio media section the client can *send* to (a=sendonly) — the talk track.
+    Reolink models split here: wired PoE cams (e.g. RLC-810WA) expose it; some
+    others (e.g. the FE-P 360) only do two-way audio over Reolink's proprietary
+    protocol, which go2rtc can't reach, so they return no such track.
+
+    Returns True/False when the camera answers, or None if it couldn't be
+    determined (unreachable / auth failure). Callers should treat None as
+    "assume yes" so a transient blip never hides a working Talk button.
+    """
+    m = _re.match(r"rtsp://(?:([^:@/]+):([^@/]+)@)?([^:/]+)(?::(\d+))?(/.*)?$", url or "")
+    if not m:
+        return None
+    user, pw, host, port, path = m.groups()
+    full = f"rtsp://{host}:{int(port or 554)}{path or '/'}"
+    hdr = "Require: www.onvif.org/ver20/backchannel\r\nAccept: application/sdp\r\n"
+    try:
+        sock = _socket.create_connection((host, int(port or 554)), timeout=timeout)
+        sock.settimeout(timeout)
+
+        def describe(cseq: int, extra: str = "") -> str:
+            sock.send(f"DESCRIBE {full} RTSP/1.0\r\nCSeq: {cseq}\r\n{hdr}{extra}\r\n".encode())
+            return sock.recv(8192).decode("utf-8", "replace")
+
+        resp = describe(1)
+        if " 401 " in resp.split("\r\n", 1)[0] and user:
+            ch = _re.search(r'realm="([^"]+)".*?nonce="([^"]+)"', resp, _re.S)
+            if ch:
+                realm, nonce = ch.group(1), ch.group(2)
+                ha1 = _hashlib.md5(f"{user}:{realm}:{pw}".encode()).hexdigest()
+                ha2 = _hashlib.md5(f"DESCRIBE:{full}".encode()).hexdigest()
+                rr = _hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+                auth = (
+                    f'Authorization: Digest username="{user}", realm="{realm}", '
+                    f'nonce="{nonce}", uri="{full}", response="{rr}"\r\n'
+                )
+                resp = describe(2, auth)
+        sock.close()
+
+        if " 200 " not in resp.split("\r\n", 1)[0]:
+            return None
+        sdp = resp.split("\r\n\r\n", 1)[-1]
+        for section in _re.split(r"(?=^m=)", sdp, flags=_re.M):
+            if section.startswith("m=audio") and _re.search(r"^a=sendonly", section, _re.M):
+                return True
+        return False
+    except Exception:
+        return None

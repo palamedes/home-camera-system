@@ -51,7 +51,7 @@
   </div>
   {% endif %}
   <button class="btn" id="audio-btn" aria-pressed="false">🔊 Audio</button>
-  {% if is_admin %}
+  {% if is_admin and talk_supported %}
   <button class="btn" id="talk-btn" data-stream="{{ talk_stream_name }}"
           aria-pressed="false"
           title="Hold to talk to the camera's speaker">🎤 Talk</button>

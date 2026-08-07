@@ -551,6 +551,22 @@ def wall(request: Request):
     )
 
 
+# Backchannel (two-way Talk) capability, probed once per camera and cached.
+# Some cameras (e.g. Reolink FE-P) only do two-way audio over a proprietary
+# protocol go2rtc can't reach, so the Talk button is hidden for them.
+_talk_cache: dict[str, bool] = {}
+
+
+def _talk_supported(camera: Any) -> bool:
+    cid = camera["id"]
+    if cid not in _talk_cache:
+        url = camera["sub_url"] or camera["main_url"]
+        # None (couldn't determine) -> assume yes, so a blip never hides a
+        # working button; only a definitive "no backchannel" hides it.
+        _talk_cache[cid] = streamprobe.backchannel_supported(url) is not False
+    return _talk_cache[cid]
+
+
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)
 def camera_page(request: Request, camera_id: str):
     camera = db.camera(camera_id)
@@ -567,6 +583,7 @@ def camera_page(request: Request, camera_id: str):
         # HD (main) on an H.265 camera is served via a go2rtc QSV transcode;
         # surface that in the live-view mode label so the extra cost is visible.
         main_is_hevc=streams._is_hevc_url(camera["main_url"]),
+        talk_supported=_talk_supported(camera),
     )
 
 
