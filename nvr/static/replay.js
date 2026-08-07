@@ -40,6 +40,8 @@ function initReplay(opts) {
   let currentRec = null;
   let recStream = null;
   let segStartedAt = 0;
+  let firstSeg = true;    // cut the very first segment fast so the buffer is
+                          // scrubbable within ~2s of the stream connecting
   let mode = 'live';      // 'live' | 'replay' (browser buffer) | 'server'
   let current = null;     // buffer segment being played in replay
   let desired = null;     // latest requested { seg, offset }, applied when ready
@@ -97,7 +99,8 @@ function initReplay(opts) {
     if (!currentRec || currentRec.state === 'inactive' || recStream !== liveStream) {
       stopSegment();
       startSegment(liveStream);
-    } else if (now() - segStartedAt >= SEG_SECONDS) {
+    } else if (now() - segStartedAt >= (firstSeg ? 1.5 : SEG_SECONDS)) {
+      firstSeg = false;
       stopSegment();
       startSegment(liveStream);
     }
@@ -245,7 +248,7 @@ function initReplay(opts) {
     label.textContent = fmt(behind);
   });
 
-  const beat = setInterval(heartbeat, 1000);
+  const beat = setInterval(heartbeat, 500);
   heartbeat();
   return { goLive, stop() { clearInterval(beat); stopSegment(); } };
 }
