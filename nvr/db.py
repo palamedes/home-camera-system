@@ -201,6 +201,17 @@ class Database:
             if column not in have:
                 self.execute(statement)
 
+        # Manual grid/wall ordering. Backfill existing rows in their current
+        # (name) order so the first render looks identical to before.
+        if "sort_order" not in have:
+            self.execute(
+                "ALTER TABLE cameras ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            )
+            for i, row in enumerate(self.query("SELECT id FROM cameras ORDER BY name")):
+                self.execute(
+                    "UPDATE cameras SET sort_order = ? WHERE id = ?", (i, row["id"])
+                )
+
         vcam_cols = {row["name"] for row in self.query("PRAGMA table_info(virtual_cameras)")}
         if vcam_cols and "viewer_visible" not in vcam_cols:
             self.execute("ALTER TABLE virtual_cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1")
@@ -303,13 +314,17 @@ class Database:
         sql = "SELECT * FROM cameras"
         if enabled_only:
             sql += " WHERE enabled = 1"
-        return self.query(sql + " ORDER BY name")
+        return self.query(sql + " ORDER BY sort_order, name")
 
     def camera(self, camera_id: str) -> sqlite3.Row | None:
         return self.one("SELECT * FROM cameras WHERE id = ?", (camera_id,))
 
     def add_camera(self, **fields: Any) -> None:
         fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            # New cameras land at the end of the grid, not the top.
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM cameras")
+            fields["sort_order"] = row["n"] if row else 0
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)
         self.execute(
@@ -327,6 +342,14 @@ class Database:
 
     def delete_camera(self, camera_id: str) -> None:
         self.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
+
+    def set_camera_order(self, ids: list[str]) -> None:
+        """Persist the grid/wall order. Ids are applied in the given sequence;
+        any camera not listed keeps its old sort_order and trails behind."""
+        for i, camera_id in enumerate(ids):
+            self.execute(
+                "UPDATE cameras SET sort_order = ? WHERE id = ?", (i, camera_id)
+            )
         self.execute("DELETE FROM segments WHERE camera_id = ?", (camera_id,))
         self.execute("DELETE FROM virtual_cameras WHERE parent_id = ?", (camera_id,))
         self.execute("DELETE FROM schedules WHERE camera_id = ?", (camera_id,))

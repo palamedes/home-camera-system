@@ -919,6 +919,24 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     return JSONResponse({"ok": True, "purged": purge})
 
 
+@app.post("/api/cameras/order")
+async def api_set_camera_order(request: Request):
+    """Persist the drag-reordered grid order (admin only via AuthMiddleware).
+    Body: {"order": ["<id>", ...]}. The same order drives the dashboard and
+    wall, since every view reads db.cameras() in sort_order."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    order = payload.get("order")
+    if not isinstance(order, list) or not all(isinstance(x, str) for x in order):
+        return JSONResponse({"error": "order must be a list of ids"}, status_code=400)
+    known = {row["id"] for row in db.cameras()}
+    ids = [x for x in order if x in known]
+    db.set_camera_order(ids)
+    return JSONResponse({"ok": True, "count": len(ids)})
+
+
 @app.get("/api/cameras/{camera_id}/streams")
 def api_camera_streams(request: Request, camera_id: str):
     """Actual resolution/bitrate of a camera's main and sub streams, plus any

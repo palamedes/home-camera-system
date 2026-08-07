@@ -11,6 +11,9 @@
     {% if cameras or virtuals %}<a href="/wall" class="btn">Wall view</a>{% endif %}
   </div>
 </div>
+{% if is_admin and cameras|length > 1 %}
+<p class="muted small" style="margin: -6px 0 16px;">Drag camera tiles to rearrange them — this order is used on the dashboard and wall too.</p>
+{% endif %}
 
 {% if cameras or virtuals %}
 <div class="stats" style="margin-bottom: 22px;">
@@ -53,9 +56,9 @@
   </div>
 </div>
 
-<div class="grid">
+<div class="grid{% if is_admin %} reorderable{% endif %}">
   {% for camera in cameras %}
-  <a class="tile" href="/cameras/{{ camera.id }}">
+  <a class="tile" href="/cameras/{{ camera.id }}" data-reorder="{{ camera.id }}">
     <div class="tile-media">
       {% if camera.online %}
         <video data-live-tile
@@ -125,8 +128,10 @@
 {% block scripts %}
 <script src="{{ asset('live.js') }}"></script>
 <script src="{{ asset('presence.js') }}"></script>
+{% if is_admin %}<script src="{{ asset('reorder.js') }}"></script>{% endif %}
 {% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
+{% if is_admin %}initReorder({ grid: '.grid' });{% endif %}
 // Live substream video per tile. The sub is low-res and passes through as
 // H.264 with no server transcode, so a wall of them stays cheap; each tile
 // keeps its snapshot as the poster and falls back to it if the stream drops.
