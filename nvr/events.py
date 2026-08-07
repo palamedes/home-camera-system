@@ -34,6 +34,9 @@ class EventService:
         self.last_run: float | None = None
         # Last-seen alarm state per "<camera>:<kind>", to fire on rising edge only.
         self._state: dict[str, bool] = {}
+        # One long-lived Reolink client per camera, so we log in once and reuse
+        # the token instead of a fresh login every poll (see _client_for).
+        self._clients: dict[str, ReolinkClient] = {}
 
     @property
     def cfg(self) -> Any:
@@ -57,6 +60,8 @@ class EventService:
 
     def stop(self) -> None:
         self._stop.set()
+        for cid in list(self._clients):
+            self._drop_client(cid)
 
     def apply(self) -> None:
         """Start or stop the poller to match the current config — called after a
@@ -97,23 +102,57 @@ class EventService:
             if active and not was:
                 self._raise(cam, kind)
 
-    def _read_states(self, cam: Any, detect: set[str]) -> dict[str, bool] | None:
-        try:
-            with ReolinkClient(
-                host=str(cam["host"]),
+    def _client_for(self, cam: Any) -> ReolinkClient:
+        """One long-lived client per camera: log in once (lazily, on first API
+        call) and reuse the token across polls. Reolink caps concurrent sessions,
+        so a fresh login every poll quickly hits "Login: max session" and starves
+        other API use (the light / night-vision reads). Recreated if the camera's
+        IP changed under it."""
+        cid = cam["id"]
+        host = str(cam["host"])
+        client = self._clients.get(cid)
+        if client is not None and client.host != host:
+            self._drop_client(cid)
+            client = None
+        if client is None:
+            client = ReolinkClient(
+                host=host,
                 username=str(cam["username"] or ""),
                 password=str(cam["password"] or ""),
-            ) as client:
-                client.login()
+            )
+            self._clients[cid] = client
+        return client
+
+    def _drop_client(self, cid: str) -> None:
+        client = self._clients.pop(cid, None)
+        if client is None:
+            return
+        try:
+            client.logout()
+        except Exception:
+            pass
+        try:
+            client.close()
+        except Exception:
+            pass
+
+    def _read_states(self, cam: Any, detect: set[str]) -> dict[str, bool] | None:
+        # Reuse the camera's session; on any failure (expired token, a blip) drop
+        # the client and retry once with a fresh login before giving up.
+        for attempt in (0, 1):
+            try:
+                client = self._client_for(cam)
                 states = dict(client.ai_state())
                 if "motion" in detect:
                     motion = client.motion_state()
                     if motion is not None:
                         states["motion"] = motion
                 return states
-        except Exception as exc:
-            log.debug("AI poll failed for %s: %s", cam["id"], exc)
-            return None
+            except Exception as exc:
+                self._drop_client(cam["id"])
+                if attempt:
+                    log.debug("AI poll failed for %s: %s", cam["id"], exc)
+        return None
 
     def _raise(self, cam: Any, kind: str) -> None:
         log.info("event: %s on %s", kind, cam["id"])

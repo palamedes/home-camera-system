@@ -89,6 +89,14 @@ class ReolinkClient:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
+        # Release the camera-side session before closing the socket. Reolink caps
+        # concurrent logins; without this the session lingers until the camera
+        # times it out, and repeated short-lived clients hit "Login: max session"
+        # (which then starves other API calls like the light/night-vision reads).
+        try:
+            self.logout()
+        except Exception:
+            pass
         self.close()
 
     def _call(self, commands: list[dict[str, Any]], authed: bool = True) -> list[dict]:
