@@ -34,6 +34,12 @@
 	# to bind :80 for the automatic HTTP->HTTPS redirect — that would fail with
 	# "address already in use". Clients use the https:// URL directly.
 	auto_https disable_redirects
+	# Disable HTTP/3 (QUIC). It broke the long streaming transcode
+	# (playback.mp4) with ERR_QUIC_PROTOCOL_ERROR, and offers nothing on a LAN.
+	# HTTP/1.1 + HTTP/2 handle streaming responses reliably.
+	servers {
+		protocols h1 h2
+	}
 }
 
 {$SENTRY_DOMAIN} {
