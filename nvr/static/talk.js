@@ -90,6 +90,26 @@
     btn.textContent = IDLE_LABEL;
   }
 
+  // Pin the mic transceiver to G.711 (PCMU/PCMA). Camera backchannels (Reolink
+  // and most RTSP cameras) only speak G.711, not Opus. Left to itself the
+  // browser offers Opus first, go2rtc answers Opus, and — since go2rtc does not
+  // transcode the send direction — the camera receives nothing (silent talk).
+  // Forcing G.711 makes the whole path PCMU/PCMA end to end, no transcode.
+  // Degrades silently on browsers without setCodecPreferences.
+  function preferG711(transceiver) {
+    try {
+      if (!transceiver || !transceiver.setCodecPreferences) return;
+      const caps = RTCRtpSender.getCapabilities('audio');
+      if (!caps || !caps.codecs) return;
+      const g711 = caps.codecs.filter(c =>
+        c.mimeType === 'audio/PCMU' || c.mimeType === 'audio/PCMA');
+      // Keep DTMF/comfort-noise so negotiation stays well-formed; drop Opus.
+      const extras = caps.codecs.filter(c =>
+        c.mimeType === 'audio/telephone-event' || c.mimeType === 'audio/CN');
+      if (g711.length) transceiver.setCodecPreferences([...g711, ...extras]);
+    } catch (_) { /* older browser — fall back to default negotiation */ }
+  }
+
   async function start() {
     if (live || !stream) return;
     const mine = ++epoch;
@@ -122,8 +142,10 @@
     // 2) WebRTC offer: one sendonly mic track, POSTed through the proxy.
     try {
       pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
-      micStream.getTracks().forEach(track =>
-        pc.addTransceiver(track, { direction: 'sendonly' }));
+      micStream.getTracks().forEach(track => {
+        const transceiver = pc.addTransceiver(track, { direction: 'sendonly' });
+        preferG711(transceiver);
+      });
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
