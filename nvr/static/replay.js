@@ -26,6 +26,8 @@ function initReplay(opts) {
                               // ~4s behind, and it warms in ~4s after page load
   const KEEP_SECONDS = 210;   // retain ~3.5 min of segments
   const WINDOW = Number(scrub && scrub.max) || 180;
+  const REVEAL_SPAN = 5;      // only show the bar once this many seconds of
+                              // buffer exist, so a drag-back actually replays
 
   const supported = typeof MediaRecorder !== 'undefined' && scrub && label;
   if (!supported) { if (container) container.hidden = true; return null; }
@@ -37,6 +39,13 @@ function initReplay(opts) {
   let revealed = false;
   function reveal() {
     if (!revealed && container) { revealed = true; container.hidden = false; }
+  }
+  // Reveal only once there's enough buffered footage that dragging the bar back
+  // lands on real video — showing it on the first ~1.5s segment let the user
+  // grab a bar that still just sat on live.
+  function maybeReveal() {
+    if (revealed || !segments.length) return;
+    if (segments[segments.length - 1].end - segments[0].start >= REVEAL_SPAN) reveal();
   }
 
   // The player has a fixed CSS height (.player-fixed), so swapping the <video>
@@ -87,7 +96,7 @@ function initReplay(opts) {
         const blob = new Blob(chunks, { type: rec.mimeType || mime });
         segments.push({ start, end: now(), url: URL.createObjectURL(blob) });
         prune();
-        reveal();   // buffer now has scrubbable footage — show the bar
+        maybeReveal();   // show the bar once there's enough to actually replay
       }
     };
     try { rec.start(); } catch (_) { if (container) container.hidden = true; return; }
