@@ -103,9 +103,66 @@ async def lifespan(_app: FastAPI):
         go2rtc.stop()
 
 
+class _HTTPSUpgradeMiddleware:
+    """Redirect plain-HTTP requests for a real public domain up to HTTPS.
+
+    Sentry serves plain HTTP on :80; the optional Caddy front (see
+    deploy/Caddyfile*) serves HTTPS on :443 and proxies back here, tagging
+    those requests X-Forwarded-Proto=https. A request NOT so tagged that
+    carries a real-domain Host (has a dot, isn't *.local / localhost / a bare
+    IP) arrived over plain HTTP and gets bounced to https://. LAN access over
+    http://<host>.local or http://<ip> is left alone, and proxied HTTPS traffic
+    never loops. Temporary (307) so it's never cached — pull the middleware and
+    plain HTTP works again immediately. Pure ASGI so it can't buffer the
+    WebRTC/SSE streaming responses the way BaseHTTPMiddleware would.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def _is_ip(host: str) -> bool:
+        parts = host.split(".")
+        return len(parts) == 4 and all(p.isdigit() and p.isascii() for p in parts)
+
+    def _upgrade(self, host: str, xfp: str) -> bool:
+        return (
+            xfp != "https"
+            and "." in host
+            and not host.endswith(".local")
+            and host != "localhost"
+            and not self._is_ip(host)
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            headers = dict(scope.get("headers") or [])
+            host = headers.get(b"host", b"").decode("latin-1").split(":")[0].lower()
+            xfp = headers.get(b"x-forwarded-proto", b"").decode("latin-1").lower()
+            if host and self._upgrade(host, xfp):
+                target = f"https://{host}{scope.get('path', '')}"
+                qs = scope.get("query_string") or b""
+                if qs:
+                    target += "?" + qs.decode("latin-1")
+                await send({
+                    "type": "http.response.start",
+                    "status": 307,
+                    "headers": [
+                        (b"location", target.encode("latin-1")),
+                        (b"content-length", b"0"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": b""})
+                return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(title="Sentry NVR", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.add_middleware(auth.AuthMiddleware, db=db, config=cfg)
+# Added last => outermost => runs before auth, so a plain-HTTP hit upgrades to
+# HTTPS instead of first bouncing to http://.../login.
+app.add_middleware(_HTTPSUpgradeMiddleware)
 
 
 def render(
