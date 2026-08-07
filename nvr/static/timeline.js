@@ -102,8 +102,11 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
       ctx.fillText(label, x, h - 5);
     }
 
-    // Recorded coverage.
-    ctx.fillStyle = '#2563eb';
+    // Recorded coverage — neutral slate so it reads as "footage present"
+    // background, leaving the vivid colours for event markers (the old blue
+    // #2563eb was nearly identical to the vehicle marker, so the whole timeline
+    // looked like vehicle events).
+    ctx.fillStyle = '#475569';
     for (const range of ranges) {
       const x0 = timeToX(range.start);
       const x1 = timeToX(range.end);

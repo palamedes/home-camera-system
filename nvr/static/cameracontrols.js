@@ -105,15 +105,19 @@
       return false;
     } finally {
       busyEls.forEach(el => { el.disabled = false; });
-      // Re-read: the camera is the source of truth, and a partial failure
-      // shouldn't leave the buttons showing a state that didn't take.
-      loadState();
+      // Reconcile against the camera — but after a beat. Reolink reports the OLD
+      // value for a moment right after a set, so an immediate re-read comes back
+      // stale and desyncs the buttons (the classic "state lags a click behind").
+      // Callers reflect the change optimistically on success; this delayed read
+      // then confirms it, or corrects a set that silently didn't take.
+      setTimeout(loadState, 1500);
     }
   }
 
-  lightBtn.addEventListener('click', () => {
+  lightBtn.addEventListener('click', async () => {
     const next = !lightOn;
-    post('light', { on: next }, [lightBtn], next ? 'Turning on…' : 'Turning off…');
+    const ok = await post('light', { on: next }, [lightBtn], next ? 'Turning on…' : 'Turning off…');
+    if (ok) { lightOn = next; paintLight(); }   // reflect now; delayed re-read confirms
   });
 
   nvMode.addEventListener('change', () => {
