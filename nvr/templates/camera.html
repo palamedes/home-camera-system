@@ -264,6 +264,17 @@ document.getElementById('fullscreen-btn').addEventListener('click', () => {
   else player.requestFullscreen();
 });
 
+// While fullscreen, a double-click exits it (like Esc). Capture phase so it
+// takes priority over the fisheye "double-click a view to focus it" handler on
+// the canvas inside; out of fullscreen, that focus behaviour is untouched.
+player.addEventListener('dblclick', (e) => {
+  if (document.fullscreenElement) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.exitFullscreen();
+  }
+}, true);
+
 {% if camera.fisheye %}
 // ---- fisheye dewarping ----
 const canvas = document.getElementById('dewarp');
