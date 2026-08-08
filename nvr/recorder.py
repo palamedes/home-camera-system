@@ -299,11 +299,16 @@ class RecordingService:
                     existing.stop()
                 self.recorders[camera_id] = CameraRecorder(dict(camera), self.config, base)
 
-    def _volume_for(self, camera: dict[str, Any], fallback: Path) -> Path:
+    def _volume_for(self, camera: Any, fallback: Path) -> Path:
         """Honour a camera's pinned volume when it's mounted with room to spare;
         otherwise fall back to the pool's normal overflow choice. Pruning is
-        per-volume, so a pinned camera simply shares its drive's age/space cap."""
-        pref = camera.get("preferred_volume")
+        per-volume, so a pinned camera simply shares its drive's age/space cap.
+
+        `camera` may be a sqlite3.Row (no .get), so read defensively."""
+        try:
+            pref = camera["preferred_volume"]
+        except (IndexError, KeyError):
+            pref = None
         if not pref:
             return fallback
         for vol in self.config.storage.volumes:

@@ -51,7 +51,8 @@
     <div class="card-body">
       {% if grid or virtuals %}
       <div class="mini-grid">
-        {% for camera in grid %}
+        {% for item in items %}
+        {% if item.kind == 'camera' %}{% set camera = item.cam %}
         <a class="mini" href="/cameras/{{ camera.id }}">
           <div class="mini-media">
             {% if camera.online %}
@@ -69,9 +70,7 @@
             <span class="viewers" data-presence="{{ camera.id }}" hidden></span>
           </div>
         </a>
-        {% endfor %}
-
-        {% for v in virtuals %}
+        {% else %}{% set v = item.vcam %}
         <div class="mini vcam" data-vcam data-stream="{{ v.stream }}"
              data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
           <a class="mini-media vcam-media" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
@@ -88,6 +87,7 @@
             <span class="viewers" data-presence="vcam:{{ v.id }}" hidden></span>
           </div>
         </div>
+        {% endif %}
         {% endfor %}
       </div>
       {% else %}

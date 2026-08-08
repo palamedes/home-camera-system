@@ -503,9 +503,28 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "calib": calib,
             "viewer_visible": bool(v["viewer_visible"]),
             "show_on_grid": bool(v["show_on_grid"]),
+            "sort_order": v["sort_order"],
             "online": _online(parent, info),
         })
     return result
+
+
+def grid_items(request: Request, *, only_grid: bool = False) -> list[dict[str, Any]]:
+    """Cameras and virtual cameras merged into one list in the shared sort_order,
+    so the dashboard, Cameras page and wall all show the same interleaved
+    arrangement. Each item is tagged kind='camera'|'virtual'."""
+    items: list[dict[str, Any]] = []
+    for c in camera_view_models(request):
+        if only_grid and not c["show_on_grid"]:
+            continue
+        items.append({"kind": "camera", "order": c.get("sort_order") or 0, "cam": c})
+    for v in virtual_view_models(request):
+        if only_grid and not v["show_on_grid"]:
+            continue
+        items.append({"kind": "virtual", "order": v.get("sort_order") or 0, "vcam": v})
+    # Stable tie-break: cameras before virtuals when orders collide.
+    items.sort(key=lambda it: (it["order"], 0 if it["kind"] == "camera" else 1))
+    return items
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -516,6 +535,7 @@ def dashboard(request: Request):
         request, "dashboard.html",
         cameras=cameras,   # all viewable, for the System recording controls
         grid=grid,         # only those shown as tiles
+        items=grid_items(request, only_grid=True),  # cameras+virtuals, interleaved
         virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
         total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
@@ -531,6 +551,7 @@ def cameras_page(request: Request):
     return render(
         request, "cameras.html",
         cameras=[c for c in cameras if c["show_on_grid"]],
+        items=grid_items(request, only_grid=True),  # cameras+virtuals, interleaved
         total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
@@ -547,6 +568,7 @@ def wall(request: Request):
     return render(
         request, "wall.html",
         cameras=cameras,
+        items=grid_items(request, only_grid=True),  # cameras+virtuals, interleaved
         virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
     )
 
@@ -926,19 +948,29 @@ def api_delete_camera(camera_id: str, purge: bool = False):
 @app.post("/api/cameras/order")
 async def api_set_camera_order(request: Request):
     """Persist the drag-reordered grid order (admin only via AuthMiddleware).
-    Body: {"order": ["<id>", ...]}. The same order drives the dashboard and
-    wall, since every view reads db.cameras() in sort_order."""
+    Body: {"order": ["cam:<id>", "vcam:<id>", ...]}. Cameras and virtuals share
+    one order space, so this drives the interleaved dashboard, Cameras page and
+    wall alike."""
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
     order = payload.get("order")
     if not isinstance(order, list) or not all(isinstance(x, str) for x in order):
-        return JSONResponse({"error": "order must be a list of ids"}, status_code=400)
-    known = {row["id"] for row in db.cameras()}
-    ids = [x for x in order if x in known]
-    db.set_camera_order(ids)
-    return JSONResponse({"ok": True, "count": len(ids)})
+        return JSONResponse({"error": "order must be a list of tokens"}, status_code=400)
+    cam_ids = {row["id"] for row in db.cameras()}
+    vcam_ids = {str(v["id"]) for v in db.virtual_cameras()}
+    cam_pairs: list[tuple[int, str]] = []
+    vcam_pairs: list[tuple[int, int]] = []
+    i = 0
+    for token in order:
+        if token.startswith("cam:") and token[4:] in cam_ids:
+            cam_pairs.append((i, token[4:])); i += 1
+        elif token.startswith("vcam:") and token[5:] in vcam_ids:
+            vcam_pairs.append((i, int(token[5:]))); i += 1
+    db.set_camera_sort(cam_pairs)
+    db.set_virtual_sort(vcam_pairs)
+    return JSONResponse({"ok": True, "count": i})
 
 
 @app.get("/api/cameras/{camera_id}/streams")

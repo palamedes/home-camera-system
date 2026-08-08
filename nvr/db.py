@@ -220,6 +220,22 @@ class Database:
             self.execute("ALTER TABLE virtual_cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1")
         if vcam_cols and "show_on_grid" not in vcam_cols:
             self.execute("ALTER TABLE virtual_cameras ADD COLUMN show_on_grid INTEGER NOT NULL DEFAULT 1")
+        # Virtuals share the cameras' sort_order space so the grid can interleave
+        # them. Backfill so existing virtuals trail after the cameras (the old
+        # "cameras first, then virtuals" layout) until the user reorders.
+        if vcam_cols and "sort_order" not in vcam_cols:
+            self.execute(
+                "ALTER TABLE virtual_cameras ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            )
+            base_row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM cameras")
+            base = base_row["n"] if base_row else 0
+            for i, row in enumerate(
+                self.query("SELECT id FROM virtual_cameras ORDER BY name")
+            ):
+                self.execute(
+                    "UPDATE virtual_cameras SET sort_order = ? WHERE id = ?",
+                    (base + i, row["id"]),
+                )
 
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
         if "role" not in user_cols:
@@ -345,22 +361,29 @@ class Database:
 
     def delete_camera(self, camera_id: str) -> None:
         self.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
-
-    def set_camera_order(self, ids: list[str]) -> None:
-        """Persist the grid/wall order. Ids are applied in the given sequence;
-        any camera not listed keeps its old sort_order and trails behind."""
-        for i, camera_id in enumerate(ids):
-            self.execute(
-                "UPDATE cameras SET sort_order = ? WHERE id = ?", (i, camera_id)
-            )
         self.execute("DELETE FROM segments WHERE camera_id = ?", (camera_id,))
         self.execute("DELETE FROM virtual_cameras WHERE parent_id = ?", (camera_id,))
         self.execute("DELETE FROM schedules WHERE camera_id = ?", (camera_id,))
 
+    def set_camera_sort(self, pairs: list[tuple[int, str]]) -> None:
+        """Apply explicit (sort_order, camera_id) pairs. Cameras and virtuals
+        share one order space so the grid can interleave them."""
+        for order, camera_id in pairs:
+            self.execute(
+                "UPDATE cameras SET sort_order = ? WHERE id = ?", (order, camera_id)
+            )
+
+    def set_virtual_sort(self, pairs: list[tuple[int, int]]) -> None:
+        """Apply explicit (sort_order, virtual_id) pairs (shared with cameras)."""
+        for order, vid in pairs:
+            self.execute(
+                "UPDATE virtual_cameras SET sort_order = ? WHERE id = ?", (order, vid)
+            )
+
     # ---- virtual cameras -------------------------------------------------
 
     def virtual_cameras(self) -> list[sqlite3.Row]:
-        return self.query("SELECT * FROM virtual_cameras ORDER BY name")
+        return self.query("SELECT * FROM virtual_cameras ORDER BY sort_order, name")
 
     def virtual_camera(self, vid: int) -> sqlite3.Row | None:
         return self.one("SELECT * FROM virtual_cameras WHERE id = ?", (vid,))
@@ -369,11 +392,18 @@ class Database:
         self, parent_id: str, name: str, yaw: float, pitch: float,
         fov: float, calib: str,
     ) -> int:
+        # Append to the end of the shared grid order (after every camera + vcam).
+        row = self.one(
+            "SELECT MAX(m) AS n FROM ("
+            "SELECT MAX(sort_order) AS m FROM cameras "
+            "UNION ALL SELECT MAX(sort_order) FROM virtual_cameras)"
+        )
+        sort_order = ((row["n"] if row and row["n"] is not None else -1) + 1)
         cur = self.execute(
             "INSERT INTO virtual_cameras "
-            "(parent_id, name, yaw, pitch, fov, calib, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (parent_id, name, yaw, pitch, fov, calib, int(time.time())),
+            "(parent_id, name, yaw, pitch, fov, calib, created_at, sort_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (parent_id, name, yaw, pitch, fov, calib, int(time.time()), sort_order),
         )
         return int(cur.lastrowid or 0)
 

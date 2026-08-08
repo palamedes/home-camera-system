@@ -66,29 +66,30 @@
 </head>
 <body>
   <div id="wall" class="wall">
-    {% for camera in cameras %}
-      {% if camera.online %}
-      <a class="wall-cell" href="/cameras/{{ camera.id }}">
-        <video data-live-tile
-               data-stream="{{ (camera.id ~ '_sub') if camera.sub_url else camera.id }}"
-               data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
-               muted playsinline></video>
-        <span class="wall-name">{{ camera.name }}</span>
-      </a>
-      {% else %}
-      <a class="wall-cell wall-off" href="/cameras/{{ camera.id }}">{{ camera.name }} — offline</a>
-      {% endif %}
-    {% endfor %}
-    {% for v in virtuals %}
-      {% if v.online %}
-      <a class="wall-cell vcam-cell" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
-         data-vcam data-stream="{{ v.stream }}"
-         data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
-        <video muted playsinline></video><canvas></canvas>
-        <span class="wall-name">{{ v.name }}</span>
-      </a>
-      {% else %}
-      <a class="wall-cell wall-off" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">{{ v.name }} — offline</a>
+    {% for item in items %}
+      {% if item.kind == 'camera' %}{% set camera = item.cam %}
+        {% if camera.online %}
+        <a class="wall-cell" href="/cameras/{{ camera.id }}">
+          <video data-live-tile
+                 data-stream="{{ (camera.id ~ '_sub') if camera.sub_url else camera.id }}"
+                 data-poster="/api/cameras/{{ camera.id }}/snapshot.jpg"
+                 muted playsinline></video>
+          <span class="wall-name">{{ camera.name }}</span>
+        </a>
+        {% else %}
+        <a class="wall-cell wall-off" href="/cameras/{{ camera.id }}">{{ camera.name }} — offline</a>
+        {% endif %}
+      {% else %}{% set v = item.vcam %}
+        {% if v.online %}
+        <a class="wall-cell vcam-cell" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
+           data-vcam data-stream="{{ v.stream }}"
+           data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+          <video muted playsinline></video><canvas></canvas>
+          <span class="wall-name">{{ v.name }}</span>
+        </a>
+        {% else %}
+        <a class="wall-cell wall-off" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}">{{ v.name }} — offline</a>
+        {% endif %}
       {% endif %}
     {% endfor %}
   </div>
