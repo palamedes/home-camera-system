@@ -261,49 +261,46 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   // ---- interaction ------------------------------------------------------
 
   // A plain press: click to seek, or drag past a threshold to select a region
-  // for export. Holding Ctrl (or Cmd) instead turns the drag into a scrub —
-  // the video follows the cursor so you can sweep through footage to find a
-  // moment.
+  // for export. Holding Ctrl (or Cmd) instead grabs the timeline and pans it
+  // left/right, so you can slide the visible window through time by hand — the
+  // same range you can reach with the scroll-to-zoom and the span presets.
   const DRAG_THRESHOLD = 4;
-  let press = null;  // { x, time, dragging, scrub }
+  let press = null;  // { x, time, dragging, pan, panEnd }
 
   const localX = event => event.clientX - canvas.getBoundingClientRect().left;
-  // Ctrl or Cmd triggers scrub. On macOS Ctrl+click is delivered as a
-  // right-click (button 2), so treat the secondary button as scrub too, and
-  // suppress the context menu that would otherwise eat the drag.
-  const isScrubKey = event =>
+  // Ctrl or Cmd starts a pan. On macOS Ctrl+click is delivered as a right-click
+  // (button 2), so treat the secondary button as pan too, and suppress the
+  // context menu that would otherwise eat the drag.
+  const isPanKey = event =>
     event.ctrlKey || event.metaKey || event.button === 2 || event.buttons === 2;
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  // Scrubbing that stays inside the loaded 5-min chunk seeks instantly; moving
-  // outside it loads the chunk under the cursor, throttled so a fast drag
-  // doesn't fire a request every pixel.
-  let lastScrubLoad = 0;
-  function scrubTo(t) {
-    t = Math.max(bounds.start, Math.min(bounds.end, t));
-    if (chunkStart !== null && t >= chunkStart && t < chunkStart + CHUNK_SECONDS
-        && video.readyState >= 1) {
-      video.currentTime = Math.max(0, t - chunkStart);
-    } else {
-      const now = (window.performance && performance.now()) || Date.now();
-      if (now - lastScrubLoad > 180) {
-        lastScrubLoad = now;
-        playFrom(Math.floor(t), { announce: false });
-      }
-    }
-    playheadLabel.textContent = `Scrubbing ${fmtFull(t)}`;
-    draw();
+  // Keep the visible window overlapping real footage: a pan can't push it
+  // entirely past the newest clip or before the oldest.
+  function clampEnd(end) {
+    const minEnd = bounds.start + windowSpan;   // windowStart >= bounds.start
+    const maxEnd = bounds.end;                   // don't scroll past newest
+    if (minEnd > maxEnd) return maxEnd;          // window wider than data: pin
+    return Math.max(minEnd, Math.min(maxEnd, end));
+  }
+
+  // Panning reveals time that may not be covered yet; refresh coverage as we
+  // go, throttled so a fast drag doesn't fetch every pixel.
+  let lastPanLoad = 0;
+  function panCoverage() {
+    const now = (window.performance && performance.now()) || Date.now();
+    if (now - lastPanLoad > 200) { lastPanLoad = now; loadCoverage(); }
   }
 
   canvas.addEventListener('pointerdown', event => {
     if (savingClip) return;   // don't seek/re-select while a clip export is running
     press = {
       x: localX(event), time: xToTime(localX(event)),
-      dragging: false, scrub: isScrubKey(event),
+      dragging: false, pan: isPanKey(event), panEnd: windowEnd,
     };
     // Capture so the drag keeps tracking even if the pointer leaves the canvas.
     try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
-    if (press.scrub) { event.preventDefault(); scrubTo(press.time); }
+    if (press.pan) event.preventDefault();
   });
 
   canvas.addEventListener('pointermove', event => {
@@ -313,21 +310,27 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
     canvas.title = hoverEv
       ? `${hoverEv.label || hoverEv.type} — ${fmtTime(hoverEv.ts)}`
       : fmtTime(xToTime(x));
-    canvas.style.cursor =
-      (press && press.scrub) || event.ctrlKey || event.metaKey ? 'ew-resize'
-        : hoverEv ? 'pointer' : 'pointer';
+    const panMode = (press && press.pan) || event.ctrlKey || event.metaKey;
+    canvas.style.cursor = panMode
+      ? (press && press.pan ? 'grabbing' : 'grab')
+      : 'pointer';
     if (press) {
       if (Math.abs(x - press.x) > DRAG_THRESHOLD) press.dragging = true;
-      if (press.scrub) scrubTo(xToTime(x));
-      else if (press.dragging) selection = { start: press.time, end: xToTime(x) };
+      if (press.pan) {
+        // Grab-and-slide: dragging right pulls the timeline right, revealing
+        // earlier time (the window moves back), like dragging a map.
+        const dxTime = ((x - press.x) / canvas.clientWidth) * windowSpan;
+        windowEnd = clampEnd(press.panEnd - dxTime);
+        panCoverage();
+      } else if (press.dragging) selection = { start: press.time, end: xToTime(x) };
     }
     draw();
   });
 
   canvas.addEventListener('pointerup', event => {
     if (!press) return;
-    if (press.scrub) {
-      playFrom(Math.floor(xToTime(localX(event))));   // settle on release point
+    if (press.pan) {
+      loadCoverage();   // settle: pull coverage/events for the final window
     } else if (press.dragging && selection) {
       // Normalise and clamp the selected span, then reveal the export bar.
       let [a, b] = [selection.start, selection.end].sort((x, y) => x - y);
