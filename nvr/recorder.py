@@ -283,19 +283,38 @@ class RecordingService:
                 self.recorders.pop(camera_id).stop()
 
         # Pick the pool volume new footage should land on right now. Shared by
-        # every camera (the pool overflows as a whole), so it's computed once.
+        # every camera (the pool overflows as a whole), so it's computed once —
+        # but a camera pinned to a specific drive overrides it.
         active = self.choose_volume()
         self.active_dir = active
         for camera_id, camera in wanted.items():
             existing = self.recorders.get(camera_id)
+            base = self._volume_for(camera, active)
             # Rebuild when the recorder is new, the record stream changed, or the
-            # active volume moved (overflow) — the last one makes fail-over work.
+            # target volume moved (overflow / pin change) — makes fail-over work.
             if (existing is None
                     or existing.camera.get("record_stream") != camera["record_stream"]
-                    or existing.base_dir != active):
+                    or existing.base_dir != base):
                 if existing is not None:
                     existing.stop()
-                self.recorders[camera_id] = CameraRecorder(dict(camera), self.config, active)
+                self.recorders[camera_id] = CameraRecorder(dict(camera), self.config, base)
+
+    def _volume_for(self, camera: dict[str, Any], fallback: Path) -> Path:
+        """Honour a camera's pinned volume when it's mounted with room to spare;
+        otherwise fall back to the pool's normal overflow choice. Pruning is
+        per-volume, so a pinned camera simply shares its drive's age/space cap."""
+        pref = camera.get("preferred_volume")
+        if not pref:
+            return fallback
+        for vol in self.config.storage.volumes:
+            if str(vol.path) == pref and vol.available():
+                try:
+                    if shutil.disk_usage(vol.path).free > WRITE_FREE_FLOOR:
+                        return vol.path
+                except OSError:
+                    pass
+                break
+        return fallback
 
     def restart(self, camera_id: str) -> None:
         """Drop a camera's recorder so the supervisor rebuilds it fresh.

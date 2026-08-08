@@ -196,6 +196,9 @@ class Database:
             "fisheye": "ALTER TABLE cameras ADD COLUMN fisheye INTEGER NOT NULL DEFAULT 0",
             "viewer_visible": "ALTER TABLE cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1",
             "show_on_grid": "ALTER TABLE cameras ADD COLUMN show_on_grid INTEGER NOT NULL DEFAULT 1",
+            # Pin a camera's recordings to one pool volume (its path); NULL = follow
+            # the normal pool overflow.
+            "preferred_volume": "ALTER TABLE cameras ADD COLUMN preferred_volume TEXT",
         }
         for column, statement in additions.items():
             if column not in have:

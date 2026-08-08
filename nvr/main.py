@@ -798,13 +798,17 @@ async def api_update_camera(camera_id: str, request: Request):
 
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
                "username", "password", "record_until", "retention_seconds",
-               "rolling_keep_seconds", "fisheye", "viewer_visible", "show_on_grid"}
+               "rolling_keep_seconds", "fisheye", "viewer_visible", "show_on_grid",
+               "preferred_volume"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
     for flag in ("record", "enabled", "fisheye", "viewer_visible", "show_on_grid"):
         if flag in fields:
             fields[flag] = 1 if fields[flag] else 0
+    # Empty string (the "Default (pool)" option) clears the pin back to NULL.
+    if "preferred_volume" in fields and not fields["preferred_volume"]:
+        fields["preferred_volume"] = None
     db.update_camera(camera_id, **fields)
     go2rtc.reload()
     recording.sync()

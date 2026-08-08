@@ -451,6 +451,17 @@
               <label title="Rough disk use at the current stream's bitrate if footage is kept for the whole 'delete after' window" data-help="cameras.est_storage">Est. storage</label>
               <span class="est-val" data-storage-est>&mdash;</span>
             </div>
+            {% if config.storage.volumes|length > 1 %}
+            <div class="setting">
+              <label for="vol-{{ camera.id }}" title="Pin this camera's recordings to one drive in the pool. Default follows the normal pool overflow." data-help="cameras.preferred_volume">Save to</label>
+              <select id="vol-{{ camera.id }}" data-volume class="rec-select">
+                <option value="" {{ 'selected' if not camera.preferred_volume }}>Default (pool)</option>
+                {% for v in config.storage.volumes %}
+                <option value="{{ v.path }}" {{ 'selected' if camera.preferred_volume == v.path|string }}>{{ v.path }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% endif %}
           </div>
           <div class="stream-meta small muted" data-encoder></div>
         </section>
@@ -990,6 +1001,27 @@ document.querySelectorAll('[data-vcam-del]').forEach(btn => {
     const r = await fetch(`/api/virtual/${btn.dataset.vcamDel}`, { method: 'DELETE' });
     if (r.ok) row.remove();
     else alert('Could not remove it.');
+  });
+});
+
+// Per-camera storage target: data-volume -> preferred_volume ("" = pool default).
+document.querySelectorAll('select[data-volume]').forEach(select => {
+  let original = select.value;
+  select.addEventListener('change', async () => {
+    const id = select.closest('[data-camera]').dataset.camera;
+    select.disabled = true;
+    try {
+      const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferred_volume: select.value }),
+      });
+      if (!response.ok) throw new Error('patch failed');
+      original = select.value;
+    } catch {
+      select.value = original;
+    } finally {
+      select.disabled = false;
+    }
   });
 });
 
