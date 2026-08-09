@@ -57,6 +57,8 @@
           title="Hold to talk to the camera's speaker">🎤 Talk</button>
   {% endif %}
   <button class="btn" id="fullscreen-btn">Fullscreen</button>
+  {% if is_admin %}<button class="btn" id="crop-new-btn"
+          title="Create a cropped view — its own camera — from a region of this one">&#9986; Crop view</button>{% endif %}
   {% if is_admin %}
   <div class="cam-controls" id="cam-controls" data-camera-id="{{ camera.id }}" hidden>
     <button class="btn" id="light-btn" aria-pressed="false" hidden>💡 Light</button>
@@ -155,6 +157,7 @@
 <script src="{{ asset('replay.js') }}"></script>
 {% if is_admin %}<script src="{{ asset('cameracontrols.js') }}"></script>{% endif %}
 {% if is_admin %}<script src="{{ asset('talk.js') }}"></script>{% endif %}
+{% if is_admin or vcam %}<script src="{{ asset('crop.js') }}"></script>{% endif %}
 {% if camera.fisheye %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 document.querySelectorAll('#oldest, #newest').forEach(el => {
@@ -177,7 +180,9 @@ const isTranscoded = stream => stream === mainStream && mainHevc;
 // browser's WebRTC decoder. ?hd=1 opts into the main stream. With no
 // substream there is nothing to choose.
 const wantHd = new URLSearchParams(location.search).has('hd');
-const useMain = wantHd || !subStream;
+// A crop virtual wants the crisp main stream (hybrid: sharp when opened).
+const cropView = {% if vcam %}true{% else %}false{% endif %};
+const useMain = wantHd || cropView || !subStream;
 const liveStream = useMain ? mainStream : subStream;
 
 // Start muted/video-only (zero transcode cost); the Audio button rebuilds the
@@ -274,6 +279,23 @@ player.addEventListener('dblclick', (e) => {
     document.exitFullscreen();
   }
 }, true);
+
+{% if is_admin %}
+// Create a crop virtual: draw a box on a snapshot, save it as its own camera.
+const cropNewBtn = document.getElementById('crop-new-btn');
+if (cropNewBtn && window.initCropEditor) {
+  cropNewBtn.addEventListener('click', () => initCropEditor({ cameraId: CAMERA_ID }));
+}
+{% endif %}
+
+{% if vcam %}
+// Viewing a crop virtual: paint its sub-rectangle of the (crisp main) stream.
+presenceVcamId = {{ vcam.id | tojson }};
+{ const t = document.getElementById('camera-title'); if (t) t.textContent = {{ vcam.name | tojson }}; }
+if (window.initCropTile) {
+  initCropTile(liveOptions.video, document.getElementById('dewarp'), {{ vcam.crop | tojson }});
+}
+{% endif %}
 
 {% if camera.fisheye %}
 // ---- fisheye dewarping ----

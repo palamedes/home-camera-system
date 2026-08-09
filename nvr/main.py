@@ -504,6 +504,9 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "viewer_visible": bool(v["viewer_visible"]),
             "show_on_grid": bool(v["show_on_grid"]),
             "sort_order": v["sort_order"],
+            "mode": v["mode"],
+            # For crop virtuals the calib JSON is the normalised {x,y,w,h} rect.
+            "crop": calib if v["mode"] == "crop" else {},
             "online": _online(parent, info),
         })
     return result
@@ -590,13 +593,26 @@ def _talk_supported(camera: Any) -> bool:
 
 
 @app.get("/cameras/{camera_id}", response_class=HTMLResponse)
-def camera_page(request: Request, camera_id: str):
+def camera_page(request: Request, camera_id: str, vcam: int | None = None):
     camera = db.camera(camera_id)
     if not camera or not can_view(request, camera):
         return render(request, "404.html", status_code=404)
+    # When opening a crop virtual camera, hand the template its rect so the live
+    # view can render the sub-region (from the crisp main stream).
+    vcam_ctx = None
+    if vcam is not None:
+        v = db.virtual_camera(vcam)
+        if v and v["parent_id"] == camera_id and v["mode"] == "crop":
+            import json as _json
+            try:
+                rect = _json.loads(v["calib"]) if v["calib"] else {}
+            except (ValueError, TypeError):
+                rect = {}
+            vcam_ctx = {"id": v["id"], "name": v["name"], "crop": rect}
     return render(
         request, "camera.html",
         camera=dict(camera),
+        vcam=vcam_ctx,
         stats=db.camera_stats(camera_id),
         recorder=recording.status().get(camera_id, {}),
         stream_name=streams.main_stream_name(camera_id),
@@ -1142,13 +1158,18 @@ async def api_create_virtual(parent_id: str, request: Request):
         return JSONResponse({"error": "A name is required."}, status_code=400)
     import json as _json
 
+    mode = payload.get("mode") or "fisheye"
+    if mode not in ("fisheye", "crop"):
+        return JSONResponse({"error": f"unknown mode {mode!r}"}, status_code=400)
     vid = db.add_virtual_camera(
         parent_id=parent_id,
         name=name,
         yaw=float(payload.get("yaw") or 0.0),
         pitch=float(payload.get("pitch") or 0.0),
         fov=float(payload.get("fov") or 1.5708),
+        # For a crop virtual this is the normalised {x,y,w,h} sub-rectangle.
         calib=_json.dumps(payload.get("calib") or {}),
+        mode=mode,
     )
     return JSONResponse({"id": vid, "name": name})
 
@@ -1170,6 +1191,7 @@ def api_get_virtual(vid: int, request: Request):
     return JSONResponse({
         "id": v["id"], "name": v["name"], "parent_id": v["parent_id"],
         "yaw": v["yaw"], "pitch": v["pitch"], "fov": v["fov"], "calib": calib,
+        "mode": v["mode"], "crop": calib if v["mode"] == "crop" else {},
     })
 
 

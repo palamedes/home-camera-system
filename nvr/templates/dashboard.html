@@ -71,8 +71,9 @@
           </div>
         </a>
         {% else %}{% set v = item.vcam %}
-        <div class="mini vcam" data-vcam data-stream="{{ v.stream }}"
-             data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+        <div class="mini vcam" data-vcam data-stream="{{ v.stream }}" data-mode="{{ v.mode }}"
+             data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'
+             data-crop='{{ v.crop | tojson }}'>
           <a class="mini-media vcam-media" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
              title="From {{ v.parent_name }}">
             {% if v.online %}
@@ -107,7 +108,8 @@
 <script src="{{ asset('live.js') }}"></script>
 <script src="{{ asset('presence.js') }}"></script>
 {% if weather_enabled %}<script src="{{ asset('weather.js') }}"></script>{% endif %}
-{% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
+{% if virtuals %}<script src="{{ asset('crop.js') }}"></script>
+<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
 <script>
 // Live substream video in each preview tile, snapshot poster as fallback.
 initLiveTiles();

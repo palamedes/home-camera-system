@@ -11,6 +11,21 @@ Nothing here is built yet. This is the to-do list to peruse before we start.
 
 ---
 
+## Multi-user / sharing (added 2026-08-09, per owner)
+
+This is a **family** deployment, so calendars are multi-user by design:
+- **Per-user linked calendars:** each logged-in user links their *own* iCloud
+  account (their own app-specific password, their own calendars). A user's
+  linked calendars are private to them by default.
+- **Shared "family" calendar:** there is also a cross-user calendar that *all*
+  users can see and add events to — make an event once, everyone sees it. Trust
+  model is relaxed on purpose (it's a household, not strangers).
+- Implications for the data model below: events/calendars need an `owner_user_id`
+  (NULL / a sentinel = the shared family calendar), CalDAV credentials are stored
+  per user (not one global account), and visibility = "mine OR shared". The
+  settings Calendar tab is per-user for account linking; the shared calendar is
+  configured once.
+
 ## Scope decisions (already made)
 
 - **Provider:** Apple iCloud only, over **CalDAV**. It's the only API iCloud has,

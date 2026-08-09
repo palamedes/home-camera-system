@@ -82,8 +82,9 @@
       {% else %}{% set v = item.vcam %}
         {% if v.online %}
         <a class="wall-cell vcam-cell" href="/cameras/{{ v.parent_id }}?vcam={{ v.id }}"
-           data-vcam data-stream="{{ v.stream }}"
-           data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
+           data-vcam data-stream="{{ v.stream }}" data-mode="{{ v.mode }}"
+           data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'
+           data-crop='{{ v.crop | tojson }}'>
           <video muted playsinline></video><canvas></canvas>
           <span class="wall-name">{{ v.name }}</span>
         </a>
@@ -98,7 +99,8 @@
   <div class="wall-hint" id="hint">Click a camera to open it &middot; Esc to exit</div>
 
   <script src="{{ asset('live.js') }}"></script>
-  {% if virtuals %}<script src="{{ asset('fisheye.js') }}"></script>{% endif %}
+  {% if virtuals %}<script src="{{ asset('crop.js') }}"></script>
+  <script src="{{ asset('fisheye.js') }}"></script>{% endif %}
   <script>
     const wall = document.getElementById('wall');
 

@@ -220,6 +220,12 @@ class Database:
             self.execute("ALTER TABLE virtual_cameras ADD COLUMN viewer_visible INTEGER NOT NULL DEFAULT 1")
         if vcam_cols and "show_on_grid" not in vcam_cols:
             self.execute("ALTER TABLE virtual_cameras ADD COLUMN show_on_grid INTEGER NOT NULL DEFAULT 1")
+        # 'fisheye' (yaw/pitch/fov dewarp) or 'crop' (a rectangular sub-region of
+        # a normal camera, stored as a normalised rect in `calib`).
+        if vcam_cols and "mode" not in vcam_cols:
+            self.execute(
+                "ALTER TABLE virtual_cameras ADD COLUMN mode TEXT NOT NULL DEFAULT 'fisheye'"
+            )
         # Virtuals share the cameras' sort_order space so the grid can interleave
         # them. Backfill so existing virtuals trail after the cameras (the old
         # "cameras first, then virtuals" layout) until the user reorders.
@@ -390,7 +396,7 @@ class Database:
 
     def add_virtual_camera(
         self, parent_id: str, name: str, yaw: float, pitch: float,
-        fov: float, calib: str,
+        fov: float, calib: str, mode: str = "fisheye",
     ) -> int:
         # Append to the end of the shared grid order (after every camera + vcam).
         row = self.one(
@@ -401,9 +407,9 @@ class Database:
         sort_order = ((row["n"] if row and row["n"] is not None else -1) + 1)
         cur = self.execute(
             "INSERT INTO virtual_cameras "
-            "(parent_id, name, yaw, pitch, fov, calib, created_at, sort_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (parent_id, name, yaw, pitch, fov, calib, int(time.time()), sort_order),
+            "(parent_id, name, yaw, pitch, fov, calib, created_at, sort_order, mode) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (parent_id, name, yaw, pitch, fov, calib, int(time.time()), sort_order, mode),
         )
         return int(cur.lastrowid or 0)
 

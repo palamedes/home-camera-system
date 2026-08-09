@@ -399,12 +399,19 @@
       const video = el.querySelector('video');
       const canvas = el.querySelector('canvas');
       if (!video || !canvas) return;
-      let view = {}, calib = {};
-      try { view = JSON.parse(el.dataset.view || '{}'); } catch (_) {}
-      try { calib = JSON.parse(el.dataset.calib || '{}'); } catch (_) {}
       if (typeof initLiveTile === 'function') {
         initLiveTile(video, { stream: el.dataset.stream });
       }
+      // Crop virtuals are a plain 2D sub-rectangle — no WebGL dewarp.
+      if (el.dataset.mode === 'crop' && typeof window.initCropTile === 'function') {
+        let crop = {};
+        try { crop = JSON.parse(el.dataset.crop || '{}'); } catch (_) {}
+        window.initCropTile(video, canvas, crop);
+        return;
+      }
+      let view = {}, calib = {};
+      try { view = JSON.parse(el.dataset.view || '{}'); } catch (_) {}
+      try { calib = JSON.parse(el.dataset.calib || '{}'); } catch (_) {}
       initFisheye(video, canvas, {
         mode: 'single', interactive: false, persistCalib: false, view, calib,
       });
