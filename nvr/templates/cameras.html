@@ -12,7 +12,7 @@
   </div>
 </div>
 {% if is_admin and items|length > 1 %}
-<p class="muted small" style="margin: -6px 0 16px;">Grab the <span aria-hidden="true">&#8942;&#8942;</span> handle at the top of any tile to drag cameras and virtual cameras into any order — used on the dashboard and wall too.</p>
+<p class="muted small" style="margin: -6px 0 16px;">Grab the <span aria-hidden="true">&#8943;</span> handle at the top of any tile to drag cameras and virtual cameras into any order — used on the dashboard and wall too.</p>
 {% endif %}
 
 {% if cameras or virtuals %}
@@ -60,7 +60,7 @@
   {% for item in items %}
   {% if item.kind == 'camera' %}{% set camera = item.cam %}
   <a class="tile" href="/cameras/{{ camera.id }}" data-reorder="cam:{{ camera.id }}">
-    {% if is_admin %}<span class="drag-handle" data-drag-handle title="Drag to reorder" aria-label="Drag to reorder">&#8942;&#8942;</span>{% endif %}
+    {% if is_admin %}<span class="drag-handle" data-drag-handle title="Drag to reorder" aria-label="Drag to reorder">&#8943;</span>{% endif %}
     <div class="tile-media">
       {% if camera.online %}
         <video data-live-tile
@@ -97,7 +97,7 @@
      data-reorder="vcam:{{ v.id }}"
      data-vcam data-stream="{{ v.stream }}"
      data-view='{{ v.view | tojson }}' data-calib='{{ v.calib | tojson }}'>
-    {% if is_admin %}<span class="drag-handle" data-drag-handle title="Drag to reorder" aria-label="Drag to reorder">&#8942;&#8942;</span>{% endif %}
+    {% if is_admin %}<span class="drag-handle" data-drag-handle title="Drag to reorder" aria-label="Drag to reorder">&#8943;</span>{% endif %}
     <div class="tile-media vcam-media">
       {% if v.online %}
         <video muted playsinline></video><canvas></canvas>
