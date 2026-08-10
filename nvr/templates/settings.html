@@ -193,6 +193,28 @@
   </form>
 </div>
 
+<!-- ========================== AUTOMATION =========================== -->
+<div class="panel" data-tab="network" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;" data-help="automation.overview">Automation &amp; scene switches</h2>
+    <div class="row" style="flex: 0 0 auto; gap: 10px; align-items: center;">
+      <span class="small muted" id="automation-status"></span>
+      <button class="btn btn-sm" type="button" id="automation-regen">Regenerate token</button>
+    </div>
+  </div>
+  <div class="panel-pad settings-grid">
+    <label class="set-field set-span2">
+      <span class="set-label">Automation token</span>
+      <input type="text" class="rec-select mono" id="automation-token" readonly value="…">
+      <span class="set-hint">A shared secret. Anyone on your LAN who has it can toggle lights — keep it private, and Regenerate to revoke old switches.</span>
+    </label>
+    <div class="set-field set-span2">
+      <p class="muted small" style="margin: 0 0 6px">Point a smart switch or Home Assistant at this URL to toggle a camera's light without logging in. <code>state</code> can be <code>on</code>, <code>off</code>, or <code>toggle</code>:</p>
+      <input type="text" class="rec-select mono" id="automation-url" readonly onfocus="this.select()">
+    </div>
+  </div>
+</div>
+
 <!-- ============================ WEATHER ============================ -->
 <div class="panel" data-tab="weather" style="margin-bottom: 26px;">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
@@ -1024,6 +1046,35 @@ document.querySelectorAll('select[data-volume]').forEach(select => {
     }
   });
 });
+
+// Automation token + example URL (scene switches / Home Assistant).
+(function () {
+  const tokEl = document.getElementById('automation-token');
+  if (!tokEl) return;
+  const urlEl = document.getElementById('automation-url');
+  const statusEl = document.getElementById('automation-status');
+  const regen = document.getElementById('automation-regen');
+  const firstCam = document.querySelector('[data-camera]');
+  const camId = firstCam ? firstCam.dataset.camera : 'CAMERA_ID';
+  const paint = (tok) => {
+    tokEl.value = tok;
+    urlEl.value = `${location.origin}/api/hook/cameras/${camId}/light?state=toggle&token=${tok}`;
+  };
+  tokEl.addEventListener('focus', () => tokEl.select());
+  fetch('/api/automation/token').then(r => r.json()).then(d => { if (d.token) paint(d.token); })
+    .catch(() => {});
+  if (regen) regen.addEventListener('click', async () => {
+    if (!confirm('Regenerate the automation token? Any switch using the old one will stop working.')) return;
+    regen.disabled = true; statusEl.textContent = 'Regenerating…';
+    try {
+      const r = await fetch('/api/automation/token', { method: 'POST' });
+      const d = await r.json();
+      if (d.token) { paint(d.token); statusEl.textContent = 'New token active'; }
+      else throw new Error();
+    } catch { statusEl.textContent = 'Failed'; }
+    finally { regen.disabled = false; }
+  });
+})();
 
 // Retention pickers: data-retention -> retention_seconds (hard max; ""=default,
 // "0"=never), data-rolling -> rolling_keep_seconds (protected minimum; ""=none).

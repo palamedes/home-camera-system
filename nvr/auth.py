@@ -97,7 +97,10 @@ class AuthMiddleware:
     admin endpoints end up accidentally exposed.
     """
 
-    PUBLIC_PREFIXES = ("/login", "/setup", "/static/", "/health")
+    # /api/hook is token-authed (a shared secret), not session-authed, so it's
+    # reachable without a login — that's how scene switches / Home Assistant
+    # reach it. The endpoint itself enforces the token.
+    PUBLIC_PREFIXES = ("/login", "/setup", "/static/", "/health", "/api/hook")
 
     def __init__(self, app, db, config):
         self.app = app

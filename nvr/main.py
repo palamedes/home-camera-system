@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 
@@ -1262,6 +1263,66 @@ async def api_camera_light(camera_id: str, request: Request):
     except camera_control.CameraControlError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"ok": True})
+
+
+# --- automation: token-authed hooks for scene switches / Home Assistant ------
+def _automation_token() -> str:
+    """The shared secret for /api/hook. Generated (and persisted) on first use."""
+    tok = db.get_setting("automation.token")
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        db.set_setting("automation.token", tok)
+    return tok
+
+
+@app.api_route("/api/hook/cameras/{camera_id}/light", methods=["GET", "POST"])
+async def api_hook_light(camera_id: str, request: Request):
+    """Toggle a camera's floodlight/spotlight from a smart switch or Home
+    Assistant — no login, authed by the shared token instead. Reachable as a
+    plain GET so even a dumb HTTP button works:
+        /api/hook/cameras/<id>/light?token=<t>&state=on|off|toggle
+    """
+    token = request.query_params.get("token") or request.headers.get("X-Sentry-Token")
+    state = (request.query_params.get("state") or "").lower()
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = token or body.get("token")
+        state = state or (body.get("state") or "").lower()
+    if not token or not secrets.compare_digest(str(token), _automation_token()):
+        return JSONResponse({"error": "bad token"}, status_code=403)
+    camera = db.camera(camera_id)
+    if not camera:
+        return JSONResponse({"error": "camera not found"}, status_code=404)
+    if state not in ("", "on", "off", "toggle"):
+        return JSONResponse({"error": "state must be on, off or toggle"}, status_code=400)
+    if state in ("", "toggle"):
+        want = not bool(camera_control.get_controls(camera).get("light"))
+    else:
+        want = state == "on"
+    try:
+        camera_control.set_light(camera, want)
+    except camera_control.CameraControlError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"ok": True, "light": want})
+
+
+@app.get("/api/automation/token")
+def api_automation_token(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({"token": _automation_token()})
+
+
+@app.post("/api/automation/token")
+async def api_automation_token_regen(request: Request):
+    if not auth.is_admin(auth.current_user(request)):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    tok = secrets.token_urlsafe(24)
+    db.set_setting("automation.token", tok)
+    return JSONResponse({"token": tok})
 
 
 @app.post("/api/cameras/{camera_id}/nightvision")

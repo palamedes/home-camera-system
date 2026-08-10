@@ -176,6 +176,8 @@
     'network.always_transcode': ['Always transcode', 'Force re-encode on playback', 'Normally footage that’s already browser-compatible is remuxed (cheap). On forces a full re-encode — rarely needed.'],
     'network.qsv_device': ['QSV device', 'Hardware transcode device', 'Intel QuickSync render device (e.g. /dev/dri/renderD128) used to accelerate playback transcoding. Blank = software encoding.'],
 
+    'automation.overview': ['Automation & scene switches', 'Toggle lights from a switch or Home Assistant', "A shared-secret URL that toggles a camera's floodlight/spotlight without a login, so a smart scene switch or Home Assistant can control the light while the camera stays powered. Use state=on, off, or toggle. Keep the token private; regenerate it to revoke anything using the old one. The camera must be always-powered (don't put it behind the light switch)."],
+
     'storage_limits.max_usage': ['Max usage', 'Disk budget for recordings', 'How much space recordings may use before the oldest are pruned — a percent of the disk (80%) or a size (380G).'],
     'storage_limits.max_age_days': ['Max age', 'Hard delete-after age', 'Footage older than this many days is deleted regardless of free space. 0 = no age cap (space-based pruning only).'],
     'storage_limits.segment_seconds': ['Segment length', 'Length of each recorded file', 'Seconds per recorded file. Shorter = finer retention and less lost to one corrupt file; 60 is a good default. Recording restarts to apply.'],
