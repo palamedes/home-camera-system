@@ -180,7 +180,7 @@
 
     'storage_limits.max_usage': ['Max usage', 'Disk budget for recordings', 'How much space recordings may use before the oldest are pruned — a percent of the disk (80%) or a size (380G).'],
     'storage_limits.max_age_days': ['Max age', 'Hard delete-after age', 'Footage older than this many days is deleted regardless of free space. 0 = no age cap (space-based pruning only).'],
-    'storage_limits.segment_seconds': ['Segment length', 'Length of each recorded file', 'Seconds per recorded file. Shorter = finer retention and less lost to one corrupt file; 60 is a good default. Recording restarts to apply.'],
+    'storage_limits.segment_seconds': ['Segment length', 'Length of each recorded file', 'Seconds per recorded file, and the main reason History trails the live view: a segment can only be played once it is finished, so History is always at least this far behind (plus a few seconds to index it). 60 is a good default; drop to 15–20 if you want History to catch up closer to live, at the cost of ~4× as many files. Shorter also means less footage lost to one corrupt file. Recording restarts to apply.'],
 
     'storage.recordings_dir': ['Recordings folder', 'Where continuous footage is stored', 'Directory continuous recordings are written to — point it at a mounted drive or NAS. New footage goes here immediately; existing footage stays put until you move it.'],
     'storage.clips_dir': ['Clips folder', 'Where saved clips are kept', 'Directory saved clips live in. These are kept permanently and never pruned.'],

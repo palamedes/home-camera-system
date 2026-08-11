@@ -566,11 +566,15 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
 
   window.addEventListener('resize', resize);
 
-  // Keep the window edge tracking newly recorded footage while idle.
+  // Keep the window edge tracking newly recorded footage while idle. Runs often
+  // so freshly-indexed footage shows up promptly — the timeline already trails
+  // live by however long a segment takes to close, and a slow refresh stacked
+  // on top of that. The window edge only advances when nothing is playing, so
+  // this never yanks the view out from under a rewind.
   setInterval(() => {
     if (chunkStart === null) windowEnd = Math.max(windowEnd, Date.now() / 1000);
     loadCoverage();
-  }, 30000);
+  }, 10000);
 
   resize();
   loadCoverage();

@@ -34,7 +34,13 @@ log = logging.getLogger("nvr.recorder")
 
 # A segment is considered closed once untouched for this long. Must exceed the
 # interval at which ffmpeg flushes, or we would index a half-written file.
-QUIET_SECONDS = 10.0
+# How long a segment file must sit untouched before it's indexed. ffmpeg closes
+# each file the instant it rolls to the next, so mtime stops moving immediately;
+# this only guards against a half-flushed file. Kept short because every second
+# here is a second the history timeline trails live. Indexing a still-open file
+# is self-correcting anyway: an unfinalised MP4 has no moov atom, so the probe
+# below fails and it's simply retried next pass.
+QUIET_SECONDS = 3.0
 
 MAX_BACKOFF = 30.0
 
@@ -353,7 +359,11 @@ class RecordingService:
                 self.index_new_segments()
             except Exception:
                 log.exception("segment indexing failed")
-            self._stop.wait(15.0)
+            # Poll often: this interval is dead time between a segment closing
+            # and it appearing on the history timeline. The scan is cheap —
+            # already-known paths are skipped by a set lookup, so a pass is one
+            # readdir per camera per volume.
+            self._stop.wait(5.0)
 
     def index_new_segments(self) -> int:
         """Add closed-but-unindexed segment files to the database."""
