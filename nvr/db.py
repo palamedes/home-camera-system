@@ -199,6 +199,10 @@ class Database:
             # Pin a camera's recordings to one pool volume (its path); NULL = follow
             # the normal pool overflow.
             "preferred_volume": "ALTER TABLE cameras ADD COLUMN preferred_volume TEXT",
+            # Soft-delete: an archived camera is removed from live views and never
+            # recorded, but its row + footage index survive so its history stays
+            # viewable (and retention keeps managing the footage).
+            "archived": "ALTER TABLE cameras ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
         }
         for column, statement in additions.items():
             if column not in have:
@@ -335,11 +339,32 @@ class Database:
 
     # ---- cameras ---------------------------------------------------------
 
-    def cameras(self, enabled_only: bool = False) -> list[sqlite3.Row]:
+    def cameras(
+        self, enabled_only: bool = False, include_archived: bool = False
+    ) -> list[sqlite3.Row]:
         sql = "SELECT * FROM cameras"
+        clauses = []
         if enabled_only:
-            sql += " WHERE enabled = 1"
+            clauses.append("enabled = 1")
+        if not include_archived:
+            clauses.append("archived = 0")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         return self.query(sql + " ORDER BY sort_order, name")
+
+    def archived_cameras(self) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM cameras WHERE archived = 1 ORDER BY name"
+        )
+
+    def set_camera_archived(self, camera_id: str, archived: bool) -> None:
+        """Soft-delete / restore. Leaves `enabled` untouched so restoring resumes
+        the camera's prior state; while archived it's excluded from cameras() so
+        it isn't streamed or recorded regardless."""
+        self.execute(
+            "UPDATE cameras SET archived = ? WHERE id = ?",
+            (1 if archived else 0, camera_id),
+        )
 
     def camera(self, camera_id: str) -> sqlite3.Row | None:
         return self.one("SELECT * FROM cameras WHERE id = ?", (camera_id,))

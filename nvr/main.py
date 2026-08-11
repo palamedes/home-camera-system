@@ -683,9 +683,15 @@ def settings_page(request: Request):
         cam["online"] = _online(row, status.get(streams.main_stream_name(row["id"])))
         cam["sched_count"] = len(schedules.get(row["id"], []))
         cameras.append(cam)
+    archived = []
+    for row in db.archived_cameras():
+        a = dict(row)
+        a["stats"] = db.camera_stats(row["id"])
+        archived.append(a)
     return render(
         request, "settings.html",
         cameras=cameras,
+        archived_cameras=archived,
         schedules=schedules,
         virtuals=virtual_view_models(request),
         storage=retention.estimate(),
@@ -960,6 +966,29 @@ def api_delete_camera(camera_id: str, purge: bool = False):
     go2rtc.reload()
     recording.sync()
     return JSONResponse({"ok": True, "purged": purge})
+
+
+@app.post("/api/cameras/{camera_id}/archive")
+def api_archive_camera(camera_id: str):
+    """Soft-delete: drop the camera from live views and stop recording it, but
+    keep its footage viewable (under Removed cameras). Admin only."""
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.set_camera_archived(camera_id, True)
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/cameras/{camera_id}/restore")
+def api_restore_camera(camera_id: str):
+    """Bring an archived camera back to its prior state. Admin only."""
+    if not db.camera(camera_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.set_camera_archived(camera_id, False)
+    go2rtc.reload()
+    recording.sync()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/cameras/order")

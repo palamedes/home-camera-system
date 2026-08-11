@@ -566,7 +566,7 @@
         <section class="cam-section cam-danger">
           <div class="cam-section-label">Danger zone</div>
           <div class="cam-row">
-            <button class="btn btn-sm btn-danger" data-delete>Delete camera</button>
+            <button class="btn btn-sm btn-danger" data-delete>Remove camera</button>
             <span class="muted small">Recorded footage is kept on disk.</span>
           </div>
         </section>
@@ -607,6 +607,28 @@
       </div>
       <a class="btn btn-sm" href="/cameras/{{ v.parent_id }}/history?vcam={{ v.id }}">History</a>
       <button class="remove-x" data-vcam-del="{{ v.id }}" title="Remove virtual camera" aria-label="Remove">&times;</button>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if archived_cameras %}
+<div class="panel" data-tab="cameras" style="margin-top: 22px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line);">
+    <h2 style="margin: 0; font-size: 16px;" data-help="cameras.removed">Removed cameras</h2>
+    <p class="muted small" style="margin: 6px 0 0;">These are no longer streamed or recorded, but their footage is still viewable until normal retention ages it out. Restore to bring one back, or delete it permanently to erase its recordings now.</p>
+  </div>
+  <div class="list">
+    {% for c in archived_cameras %}
+    <div class="list-item" data-archived="{{ c.id }}">
+      <div class="grow">
+        <div class="title">{{ c.name }}</div>
+        <div class="sub muted small">{{ c.host }} &middot; {{ c.model or c.brand or 'camera' }}{% if c.stats.bytes %} &middot; {{ c.stats.bytes | human_size }} stored{% endif %}</div>
+      </div>
+      <a class="btn btn-sm" href="/cameras/{{ c.id }}/history">History</a>
+      <button class="btn btn-sm" data-restore="{{ c.id }}">Restore</button>
+      <button class="btn btn-sm btn-danger" data-purge="{{ c.id }}">Delete permanently</button>
     </div>
     {% endfor %}
   </div>
@@ -1102,16 +1124,61 @@ document.querySelectorAll('select[data-volume]').forEach(select => {
   });
 });
 
+// Removing a camera is a two-way choice: keep the footage (archive, still
+// viewable) or erase it (purge files, reclaim space). A small modal makes the
+// consequence explicit instead of the old silent "index gone, files orphaned".
+function showRemoveDialog(id, name) {
+  const bd = document.createElement('div');
+  bd.className = 'modal-backdrop';
+  bd.innerHTML =
+    '<div class="modal"><div class="modal-head"><h2></h2>'
+    + '<button class="modal-close" type="button" aria-label="Close">&times;</button></div>'
+    + '<div class="modal-body">'
+    + '<p style="margin:0 0 12px;color:var(--text)">What should happen to this camera’s recorded footage?</p>'
+    + '<div style="display:flex;flex-direction:column;gap:10px">'
+    + '<button class="btn" data-keep style="text-align:left">'
+    + '<strong>Keep footage</strong><br><span class="small muted">Remove the camera but keep its history viewable under “Removed cameras.” Ages out with normal retention.</span></button>'
+    + '<button class="btn btn-danger" data-erase style="text-align:left">'
+    + '<strong>Erase footage</strong><br><span class="small muted">Remove the camera and permanently delete its recordings to reclaim the space now.</span></button>'
+    + '</div></div></div>';
+  bd.querySelector('h2').textContent = 'Remove ' + name + '?';
+  document.body.appendChild(bd);
+  const close = () => bd.remove();
+  bd.querySelector('.modal-close').addEventListener('click', close);
+  bd.addEventListener('click', e => { if (e.target === bd) close(); });
+  bd.querySelector('[data-keep]').addEventListener('click', async () => {
+    const r = await fetch(`/api/cameras/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+    if (r.ok) location.reload();
+  });
+  bd.querySelector('[data-erase]').addEventListener('click', async () => {
+    if (!confirm(`Permanently erase all of ${name}’s recorded footage? This cannot be undone.`)) return;
+    const r = await fetch(`/api/cameras/${encodeURIComponent(id)}?purge=true`, { method: 'DELETE' });
+    if (r.ok) location.reload();
+  });
+}
+
 document.querySelectorAll('[data-delete]').forEach(button => {
-  button.addEventListener('click', async () => {
+  button.addEventListener('click', () => {
     const row = button.closest('[data-camera]');
-    const id = row.dataset.camera;
-    const name = row.querySelector('.title').textContent.trim();
-    if (!confirmRemove('camera', name, 'Recorded footage is kept on disk.')) return;
-    button.disabled = true;
-    const response = await fetch(`/api/cameras/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (response.ok) row.remove();
-    else button.disabled = false;
+    showRemoveDialog(row.dataset.camera, row.querySelector('.title').textContent.trim());
+  });
+});
+
+// Removed-cameras controls: restore, or permanently erase.
+document.querySelectorAll('[data-restore]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const r = await fetch(`/api/cameras/${encodeURIComponent(btn.dataset.restore)}/restore`, { method: 'POST' });
+    if (r.ok) location.reload(); else btn.disabled = false;
+  });
+});
+document.querySelectorAll('[data-purge]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const name = btn.closest('[data-archived]').querySelector('.title').textContent.trim();
+    if (!confirm(`Permanently delete ${name} and ERASE its footage from disk? This cannot be undone.`)) return;
+    btn.disabled = true;
+    const r = await fetch(`/api/cameras/${encodeURIComponent(btn.dataset.purge)}?purge=true`, { method: 'DELETE' });
+    if (r.ok) location.reload(); else btn.disabled = false;
   });
 });
 

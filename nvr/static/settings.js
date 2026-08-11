@@ -200,6 +200,7 @@
     'cameras.show_on_grid': ['On grid', 'Show the raw tile on dashboards', 'When on, the raw camera tile appears on the dashboard and Cameras page. Turn it off to keep only this camera’s virtual (dewarped) views on the grid.'],
     'cameras.viewer_visible': ['Viewer visible', 'Let viewer accounts see this', 'Whether non-admin viewer accounts can see this camera. Off hides it from viewers while admins keep full access.'],
     'cameras.schedules': ['Schedules', 'Automate by time of day', 'Automate recording, the spotlight, or night vision by time of day and weekday, using the server’s local time. An end time earlier than the start wraps past midnight.'],
+    'cameras.removed': ['Removed cameras', 'Kept for their footage', 'Cameras you removed with “Keep footage.” They’re no longer streamed or recorded, but their recordings stay viewable in History until normal retention ages them out. Restore brings the camera back; Delete permanently erases its footage now to reclaim space. To keep a specific moment forever, save it as a clip — clips are never pruned.'],
 
     // ---- users tab --------------------------------------------------------
     'users.overview': ['Users', 'Accounts that can sign in', 'Accounts that can sign into Sentry. Admins have full control — cameras, settings and other users; viewers can only watch the cameras marked viewer-visible. Use "Add user" to create one, "Reset password" to set a new one, and the × to remove one.'],
