@@ -165,6 +165,29 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Non-camera devices Sentry can control over plain HTTP on the LAN: relays and
+-- smart switches (Shelly first, but the driver is just a name here). Kept
+-- deliberately generic — a driver knows how to build the on/off/toggle request
+-- for its kind, everything else is common.
+CREATE TABLE IF NOT EXISTS devices (
+    id          TEXT    PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    -- Driver key, e.g. 'shelly' | 'http'. Decides how requests are built.
+    driver      TEXT    NOT NULL DEFAULT 'shelly',
+    host        TEXT    NOT NULL,
+    -- Which output/relay on a multi-channel device.
+    channel     INTEGER NOT NULL DEFAULT 0,
+    username    TEXT,
+    password    TEXT,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    -- Last known on/off state and when we last reached it, for the UI.
+    last_state  INTEGER,
+    last_seen   REAL,
+    last_error  TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
 """
 
 
@@ -457,6 +480,39 @@ class Database:
 
     def delete_virtual_camera(self, vid: int) -> None:
         self.execute("DELETE FROM virtual_cameras WHERE id = ?", (vid,))
+
+    # ---- devices (relays / smart switches) --------------------------------
+
+    def devices(self, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM devices"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        return self.query(sql + " ORDER BY sort_order, name")
+
+    def device(self, device_id: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM devices WHERE id = ?", (device_id,))
+
+    def add_device(self, **fields: Any) -> None:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM devices")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        self.execute(
+            f"INSERT INTO devices ({cols}) VALUES ({marks})", tuple(fields.values())
+        )
+
+    def update_device(self, device_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE devices SET {assigns} WHERE id = ?", (*fields.values(), device_id)
+        )
+
+    def delete_device(self, device_id: str) -> None:
+        self.execute("DELETE FROM devices WHERE id = ?", (device_id,))
 
     # ---- clips -----------------------------------------------------------
 

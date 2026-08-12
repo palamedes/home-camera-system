@@ -21,10 +21,11 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from . import (
-    appsettings, auth, camera_control, config as config_module, discovery,
-    playback, proxy, streamprobe, streams,
+    appsettings, auth, camera_control, config as config_module, devices as devicelib,
+    discovery, playback, proxy, streamprobe, streams,
 )
 from .db import Database
 from .alerts import AlertService
@@ -1349,6 +1350,175 @@ async def api_hook_light(camera_id: str, request: Request):
     except camera_control.CameraControlError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"ok": True, "light": want})
+
+
+# ---------------------------------------------------------------------------
+# API — devices (relays / smart switches). Admin-gated in AuthMiddleware.
+# ---------------------------------------------------------------------------
+
+_DEVICE_SECRET_FIELDS = ("password",)
+
+
+def _device_dict(row: Any, *, include_secrets: bool = False) -> dict[str, Any]:
+    data = {k: row[k] for k in row.keys()}
+    if not include_secrets:
+        for field in _DEVICE_SECRET_FIELDS:
+            data.pop(field, None)
+    data["enabled"] = bool(data.get("enabled"))
+    if data.get("last_state") is not None:
+        data["last_state"] = bool(data["last_state"])
+    return data
+
+
+def _remember(device_id: str, state: bool | None, error: str | None) -> None:
+    """Cache what we last saw, so the UI can show a device without waiting on it."""
+    db.update_device(
+        device_id,
+        last_state=None if state is None else (1 if state else 0),
+        last_seen=time.time(),
+        last_error=error,
+    )
+
+
+@app.get("/api/devices")
+def api_devices(request: Request):
+    return JSONResponse({
+        "devices": [_device_dict(d) for d in db.devices()],
+        "drivers": devicelib.driver_choices(),
+    })
+
+
+@app.post("/api/devices")
+async def api_add_device(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    name = (payload.get("name") or "").strip()
+    host = (payload.get("host") or "").strip()
+    if not name or not host:
+        return JSONResponse({"error": "A name and address are required."}, status_code=400)
+    driver = payload.get("driver") or "shelly"
+    if driver not in devicelib.DRIVERS:
+        return JSONResponse({"error": f"unknown driver {driver!r}"}, status_code=400)
+    device_id = _unique_device_id(name)
+    db.add_device(
+        id=device_id, name=name, driver=driver, host=host,
+        channel=int(payload.get("channel") or 0),
+        username=(payload.get("username") or "").strip() or None,
+        password=payload.get("password") or None,
+    )
+    return JSONResponse({"id": device_id, "name": name})
+
+
+def _unique_device_id(name: str) -> str:
+    base = slugify(name) or "device"
+    candidate, suffix = base, 2
+    while db.device(candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+@app.patch("/api/devices/{device_id}")
+async def api_update_device(device_id: str, request: Request):
+    if not db.device(device_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    allowed = {"name", "driver", "host", "channel", "username", "password", "enabled"}
+    fields = {k: v for k, v in payload.items() if k in allowed}
+    if "driver" in fields and fields["driver"] not in devicelib.DRIVERS:
+        return JSONResponse({"error": "unknown driver"}, status_code=400)
+    if "enabled" in fields:
+        fields["enabled"] = 1 if fields["enabled"] else 0
+    if "channel" in fields:
+        try:
+            fields["channel"] = int(fields["channel"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "channel must be a number"}, status_code=400)
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_device(device_id, **fields)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/devices/{device_id}")
+def api_delete_device(device_id: str):
+    if not db.device(device_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_device(device_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/devices/{device_id}/state")
+async def api_set_device_state(device_id: str, request: Request):
+    """Turn a device on/off/toggle. Body: {"state": "on"|"off"|"toggle"}."""
+    device = db.device(device_id)
+    if not device:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    state = (payload.get("state") or "toggle").lower()
+    if state not in ("on", "off", "toggle"):
+        return JSONResponse({"error": "state must be on, off or toggle"}, status_code=400)
+    try:
+        result = await run_in_threadpool(_apply_device_state, device, state)
+    except devicelib.DeviceError as exc:
+        _remember(device_id, None, str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    _remember(device_id, result, None)
+    return JSONResponse({"ok": True, "state": result})
+
+
+def _apply_device_state(device: Any, state: str) -> bool:
+    if state == "toggle":
+        return devicelib.toggle(device)
+    return devicelib.set_state(device, state == "on")
+
+
+@app.post("/api/devices/{device_id}/test")
+async def api_test_device(device_id: str):
+    """Ask the device what it is — confirms address, auth and driver in one go."""
+    device = db.device(device_id)
+    if not device:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        info = await run_in_threadpool(devicelib.identify, device)
+        state = await run_in_threadpool(devicelib.get_state, device)
+    except devicelib.DeviceError as exc:
+        _remember(device_id, None, str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    _remember(device_id, state, None)
+    return JSONResponse({"ok": True, "info": info, "state": state})
+
+
+@app.api_route("/api/hook/devices/{device_id}/state", methods=["GET", "POST"])
+async def api_hook_device(device_id: str, request: Request):
+    """Token-authed device control, for a Shelly's own input button, a phone
+    shortcut or anything else that can fetch a URL:
+        /api/hook/devices/<id>/state?token=<t>&state=on|off|toggle
+    """
+    token = request.query_params.get("token") or request.headers.get("X-Sentry-Token")
+    state = (request.query_params.get("state") or "toggle").lower()
+    if not token or not secrets.compare_digest(str(token), _automation_token()):
+        return JSONResponse({"error": "bad token"}, status_code=403)
+    device = db.device(device_id)
+    if not device or not device["enabled"]:
+        return JSONResponse({"error": "device not found"}, status_code=404)
+    if state not in ("on", "off", "toggle"):
+        return JSONResponse({"error": "state must be on, off or toggle"}, status_code=400)
+    try:
+        result = await run_in_threadpool(_apply_device_state, device, state)
+    except devicelib.DeviceError as exc:
+        _remember(device_id, None, str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    _remember(device_id, result, None)
+    return JSONResponse({"ok": True, "state": result})
 
 
 @app.get("/api/automation/token")

@@ -11,6 +11,7 @@
 
 <nav class="settings-tabs" role="tablist">
   <button type="button" class="settings-tab" data-tab-btn="cameras">Cameras</button>
+  <button type="button" class="settings-tab" data-tab-btn="devices">Devices</button>
   <button type="button" class="settings-tab" data-tab-btn="weather">Weather</button>
   <button type="button" class="settings-tab" data-tab-btn="alerts">Alerts &amp; events</button>
   <button type="button" class="settings-tab" data-tab-btn="network">Network</button>
@@ -358,6 +359,18 @@
 ] %}
 {% set daynames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
 {% set actionlabels = {'record': 'Record', 'light': 'Spotlight', 'nightvision': 'Night vision'} %}
+
+<!-- ============================ DEVICES ============================ -->
+<div class="panel" data-tab="devices" style="margin-bottom: 26px;">
+  <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0; font-size: 16px;" data-help="devices.overview">Devices</h2>
+    <button class="btn btn-sm btn-primary" type="button" id="device-add">Add device</button>
+  </div>
+  <div class="panel-pad">
+    <p class="muted small" style="margin: 0 0 14px;">Relays and smart switches Sentry controls directly over your LAN — no hub, no cloud, no account. Wire an ordinary wall switch into a Shelly's input and it can call Sentry back; Sentry decides what happens.</p>
+    <div class="list" id="device-list"><div class="muted small">Loading&hellip;</div></div>
+  </div>
+</div>
 
 <div class="panel" data-tab="cameras">
   <div class="panel-pad" style="border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
@@ -710,6 +723,8 @@
 <script src="{{ asset('settings.js') }}"></script>
 <script src="{{ asset('streams.js') }}"></script>
 <script src="{{ asset('schedules.js') }}"></script>
+<script src="{{ asset('devices.js') }}"></script>
+<script>initDevices();</script>
 <script>
 // Send a test alert to the configured webhook.
 (function () {

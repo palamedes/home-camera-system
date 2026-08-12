@@ -176,6 +176,8 @@
     'network.always_transcode': ['Always transcode', 'Force re-encode on playback', 'Normally footage that’s already browser-compatible is remuxed (cheap). On forces a full re-encode — rarely needed.'],
     'network.qsv_device': ['QSV device', 'Hardware transcode device', 'Intel QuickSync render device (e.g. /dev/dri/renderD128) used to accelerate playback transcoding. Blank = software encoding.'],
 
+    'devices.overview': ['Devices', 'Relays and smart switches on your LAN', "Non-camera hardware Sentry controls directly over local HTTP — Shelly relays first. Add one by its LAN address (reserve that address on your router so it can't move), press Test to confirm Sentry can reach it, then use On/Off. Because it's local HTTP there's no hub, no cloud and no vendor account. The same automation token that protects the light hook also lets a device — or a wall switch wired into a Shelly's input — call Sentry back, so a paddle press, a schedule, or a camera detection can all drive the same relay."],
+
     'automation.overview': ['Automation & scene switches', 'Toggle lights from a switch or Home Assistant', "A shared-secret URL that toggles a camera's floodlight/spotlight without a login, so a smart scene switch or Home Assistant can control the light while the camera stays powered. Use state=on, off, or toggle. Keep the token private; regenerate it to revoke anything using the old one. The camera must be always-powered (don't put it behind the light switch)."],
 
     'storage_limits.max_usage': ['Max usage', 'Disk budget for recordings', 'How much space recordings may use before the oldest are pruned — a percent of the disk (80%) or a size (380G).'],

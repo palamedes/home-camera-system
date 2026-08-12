@@ -291,6 +291,9 @@ a { color: inherit; text-decoration: none; }
 .drag-handle:active { cursor: grabbing; }
 .tile.dragging { opacity: .4; transform: none; }
 
+/* Devices list: a failed relay call reports the device's own message. */
+.error-text { color: var(--bad, #ef4444); }
+
 /* Crop-virtual editor: draw a box on a snapshot. */
 .crop-modal { max-width: min(880px, 94vw); }
 .crop-stage {

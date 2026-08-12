@@ -159,6 +159,8 @@ class AuthMiddleware:
                 # for anyone who can see it; only changes need admin.
                 or (path.startswith("/api/virtual") and method != "GET")
                 or (path.startswith("/api/cameras") and method in ("POST", "PATCH", "DELETE"))
+                # Relays and switches control the physical house; viewers watch.
+                or path.startswith("/api/devices")
             )
             if admin_only:
                 from starlette.responses import JSONResponse
