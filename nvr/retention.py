@@ -83,7 +83,12 @@ class RetentionService:
         """
         global_hard = self.config.storage.max_age_days * 86400
         windows: dict[str, tuple[int, int]] = {}
-        for c in self.db.cameras():
+        # include_archived: a camera removed with "Keep footage" still owns its
+        # retention override. Without this it drops out of `windows` entirely and
+        # the orphan branch below prunes it at the global cap — silently deleting
+        # footage the operator marked "Never (until space)" or gave a longer
+        # override than the global limit.
+        for c in self.db.cameras(include_archived=True):
             rs = c["retention_seconds"]
             hard = global_hard if rs is None else int(rs)
             rolling = int(c["rolling_keep_seconds"] or 0)
@@ -171,9 +176,19 @@ class RetentionService:
                         vol.path, FREE_SPACE_FLOOR,
                     )
                     break
-                for row in rows:
+                # Stop the moment the floor is met rather than running the whole
+                # batch: dipping one byte under it used to cost up to BATCH (500)
+                # segments — tens of GB of the oldest footage to reclaim almost
+                # nothing. Re-stat every few deletes so the check is cheap.
+                for i, row in enumerate(rows):
                     freed += self._delete(row)
                     deleted += 1
+                    if i % 10 == 9:
+                        try:
+                            if shutil.disk_usage(vol.path).free >= FREE_SPACE_FLOOR:
+                                break
+                        except OSError:
+                            break
                 try:
                     usage = shutil.disk_usage(vol.path)
                 except OSError:

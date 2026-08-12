@@ -558,19 +558,36 @@ class Database:
     def all_segments(self) -> list[sqlite3.Row]:
         return self.query("SELECT id, camera_id, path, size FROM segments")
 
+    @staticmethod
+    def _under_pattern(prefix: str) -> str:
+        """A LIKE pattern matching paths inside directory `prefix`.
+
+        Anchored to a directory boundary: a bare `prefix + '%'` also matches
+        sibling volumes that merely share the prefix ('/mnt/nvr' matching
+        '/mnt/nvr2/...'), so pruning the volume that's low on space could delete
+        another drive's footage and free nothing. LIKE's own wildcards are
+        escaped too — '_' matches any character, and it's common in real paths
+        ('/mnt/sentry_data').
+        """
+        escaped = prefix.rstrip("/").replace("\\", "\\\\")
+        escaped = escaped.replace("%", "\\%").replace("_", "\\_")
+        return escaped + "/%"
+
     def recorded_bytes_under(self, prefix: str) -> int:
         """Total recorded bytes whose path is under `prefix` — i.e. the space one
         storage volume is using."""
         row = self.one(
-            "SELECT COALESCE(SUM(size), 0) AS n FROM segments WHERE path LIKE ?",
-            (prefix + "%",),
+            "SELECT COALESCE(SUM(size), 0) AS n FROM segments "
+            "WHERE path LIKE ? ESCAPE '\\'",
+            (self._under_pattern(prefix),),
         )
         return int(row["n"]) if row else 0
 
     def oldest_segments_under(self, prefix: str, limit: int = 500) -> list[sqlite3.Row]:
         return self.query(
-            "SELECT * FROM segments WHERE path LIKE ? ORDER BY start_ts LIMIT ?",
-            (prefix + "%", limit),
+            "SELECT * FROM segments WHERE path LIKE ? ESCAPE '\\' "
+            "ORDER BY start_ts LIMIT ?",
+            (self._under_pattern(prefix), limit),
         )
 
     def update_segment_path(self, segment_id: int, path: str) -> None:

@@ -282,7 +282,10 @@ def login_submit(
         )
     token = auth.new_token()
     db.create_session(token, user["id"], cfg.server.session_days * 86400)
-    target = next if next.startswith("/") else "/"
+    # Same-site paths only. "/" alone isn't enough: "//evil.example" and
+    # "/\evil.example" are protocol-relative URLs that browsers send off-site,
+    # which would turn a login link into a credential-harvesting redirect.
+    target = next if re.match(r"^/(?![/\\])", next or "") else "/"
     response = RedirectResponse(target, status_code=303)
     auth.set_session_cookie(
         response, token, days=cfg.server.session_days, secure=cfg.server.secure_cookies
@@ -1103,8 +1106,11 @@ def _schedule_dict(row: Any) -> dict[str, Any]:
 
 
 @app.get("/api/cameras/{camera_id}/schedules")
-def api_list_schedules(camera_id: str):
-    if not db.camera(camera_id):
+def api_list_schedules(request: Request, camera_id: str):
+    # can_view like every other camera-scoped GET: a camera hidden from viewers
+    # shouldn't leak its light/record timetable (i.e. the household's routine).
+    camera = db.camera(camera_id)
+    if not camera or not can_view(request, camera):
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse([_schedule_dict(s) for s in db.schedules_for(camera_id)])
 
@@ -1849,7 +1855,12 @@ async def api_save_clip(
     if len(data) > 512 * 1024 * 1024:
         return JSONResponse({"error": "clip too large"}, status_code=413)
 
-    ext = ".webm" if "webm" in (file.content_type or "").lower() else ".mp4"
+    # Never persist the client's Content-Type: it's echoed back on download, so
+    # an uploaded text/html body would render as a page on this origin (stored
+    # XSS with the viewer's own session). Derive it from a fixed whitelist.
+    is_webm = "webm" in (file.content_type or "").lower()
+    ext = ".webm" if is_webm else ".mp4"
+    mime = "video/webm" if is_webm else "video/mp4"
     fname = f"{slugify(camera_id)}-{int(time.time())}{ext}"
     dest = cfg.storage.clips_dir / fname
     dest.write_bytes(data)
@@ -1857,7 +1868,7 @@ async def api_save_clip(
     vid = int(vcam_id) if vcam_id.strip().isdigit() else None
     clip_id = db.add_clip(
         camera_id=camera_id, name=(name.strip() or "Clip"), path=str(dest),
-        mime=file.content_type or "video/webm", size=len(data),
+        mime=mime, size=len(data),
         vcam_id=vid, start_ts=start or None, duration=duration or None,
     )
     return JSONResponse({"id": clip_id, "redirect": "/clips"})
@@ -1906,7 +1917,12 @@ def api_clip_file(clip_id: int, request: Request):
     path = Path(clip["path"])
     if not path.exists():
         return Response("clip file missing", status_code=404)
-    return FileResponse(path, media_type=clip["mime"] or "video/webm")
+    # Defence in depth for rows written before the mime whitelist above: serve
+    # only a known video type, and tell the browser never to sniff past it.
+    mime = clip["mime"] if clip["mime"] in ("video/mp4", "video/webm") else "video/mp4"
+    return FileResponse(
+        path, media_type=mime, headers={"X-Content-Type-Options": "nosniff"}
+    )
 
 
 @app.delete("/api/clips/{clip_id}")
@@ -1951,8 +1967,13 @@ async def go2rtc_proxy(request: Request, path: str):
     # Live video (WebRTC, MJPEG, frames) is addressed by a `src` stream name.
     # A viewer must not be able to pull a camera they're not allowed to see by
     # naming its stream directly, so resolve src -> camera and check access.
+    # Every allowlisted go2rtc endpoint is addressed by `src`, so demand it up
+    # front: without this, omitting the parameter skipped the access check
+    # entirely, which is how api/streams leaked camera credentials to viewers.
     src = request.query_params.get("src")
-    if src and not auth.is_admin(auth.current_user(request)):
+    if not src:
+        return Response("src required", status_code=400)
+    if not auth.is_admin(auth.current_user(request)):
         camera_id = src[:-4] if src.endswith("_sub") else src
         camera = db.camera(camera_id)
         if not camera or not can_view(request, camera):

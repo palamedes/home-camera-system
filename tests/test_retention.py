@@ -136,3 +136,34 @@ def test_hard_cap_purges_held_footage(app_module, db):
     RetentionService(cfg, db).run_once()
 
     assert not held.exists()   # past the 4-day hard cap
+
+
+def test_archived_camera_keeps_its_never_delete_footage(app_module, db):
+    """Removing a camera with "Keep footage" must not silently downgrade its
+    retention. An archived camera drops out of db.cameras() by default, and the
+    orphan branch would then prune it at the global cap — destroying footage the
+    operator explicitly marked never-delete."""
+    cfg = app_module.cfg
+    add_camera(db, "cam1", retention_seconds=0)      # "Never (until space)"
+    now = time.time()
+    ancient = _segment_file(cfg, "cam1/ancient.mp4")
+    db.add_segment("cam1", str(ancient), now - 30 * 86400, 60.0, 100, "h264")
+
+    db.set_camera_archived("cam1", True)
+    RetentionService(cfg, db).run_once()
+
+    assert ancient.exists()
+
+
+def test_archived_camera_keeps_long_retention_override(app_module, db):
+    """A 90-day override outlives archiving even though the global cap is 7d."""
+    cfg = app_module.cfg
+    add_camera(db, "cam2", retention_seconds=90 * 86400)
+    now = time.time()
+    old = _segment_file(cfg, "cam2/thirty_days.mp4")
+    db.add_segment("cam2", str(old), now - 30 * 86400, 60.0, 100, "h264")
+
+    db.set_camera_archived("cam2", True)
+    RetentionService(cfg, db).run_once()
+
+    assert old.exists()

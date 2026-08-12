@@ -30,13 +30,17 @@ HOP_BY_HOP = {
 # rewrite its own configuration and add arbitrary stream sources — exposing all
 # of it to any logged-in browser would turn a session into remote command
 # execution on this box.
+# NB: "api/streams" is deliberately NOT here. go2rtc's stream dump embeds each
+# camera's full RTSP URL — credentials and all — and it takes no `src`, so the
+# per-camera access check in go2rtc_proxy (which keys off `src`) can't gate it.
+# Any logged-in session, viewer included, could have read every camera password.
+# Nothing in the UI calls it; it only ever reaches go2rtc's own dashboard.
 ALLOWED_PATHS = {
     "api/webrtc",
     "api/frame.jpeg",
     "api/stream.mjpeg",
     "api/stream.m3u8",
     "api/stream.ts",
-    "api/streams",
 }
 
 
