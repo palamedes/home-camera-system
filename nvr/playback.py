@@ -153,30 +153,40 @@ def stream_window(
             "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
             "-f", "mp4", "pipe:1",
         ]
-        process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        try:
-            assert process.stdout is not None
-            while True:
-                chunk = process.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            # The client disconnecting mid-stream is normal (they scrubbed
-            # elsewhere); make sure ffmpeg does not linger.
-            if process.poll() is None:
-                process.kill()
-            stderr = b""
-            if process.stderr:
+        # stderr to a file, not a pipe. We only ever read stdout in the loop
+        # below, so a stderr pipe filling its 64 KiB buffer (easy on a window
+        # spanning damaged segments — concat demuxer errors are frequent and
+        # logged at error level) would block ffmpeg, which stops writing stdout,
+        # which blocks this read forever. StreamingResponse runs this generator
+        # in the threadpool, so each hang would permanently consume one of the
+        # 40 available slots and strand an ffmpeg holding a QSV context.
+        err_path = Path(workdir) / "ffmpeg-stderr.log"
+        with open(err_path, "wb") as err_file:
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=err_file
+            )
+            try:
+                assert process.stdout is not None
+                while True:
+                    chunk = process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                # The client disconnecting mid-stream is normal (they scrubbed
+                # elsewhere); make sure ffmpeg does not linger.
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
                 try:
-                    stderr = process.stderr.read() or b""
-                except Exception:
-                    pass
-            process.wait(timeout=5)
-            if stderr.strip():
-                log.debug("playback ffmpeg: %s", stderr.decode(errors="replace").strip())
+                    stderr = err_path.read_bytes()
+                except OSError:
+                    stderr = b""
+                if stderr.strip():
+                    log.debug(
+                        "playback ffmpeg: %s",
+                        stderr.decode(errors="replace").strip()[-2000:],
+                    )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

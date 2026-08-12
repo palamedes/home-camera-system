@@ -75,10 +75,23 @@ class CameraRecorder:
         self.last_error: str | None = None
         self.started_at: float | None = None
         self.restarts = 0
+        self._log_handle = None
 
     @property
     def directory(self) -> Path:
         return self.base_dir / self.camera_id
+
+    @property
+    def log_path(self) -> Path:
+        """Where this recorder's ffmpeg writes its diagnostics."""
+        return self.config.data_dir / f"ffmpeg-{self.camera_id}.log"
+
+    def _tail_log(self, lines: int = 40) -> str:
+        try:
+            with open(self.log_path, "r", errors="replace") as handle:
+                return "".join(handle.readlines()[-lines:])
+        except OSError:
+            return ""
 
     def ensure_directories(self) -> None:
         """Pre-create today's and tomorrow's day folders.
@@ -124,17 +137,39 @@ class CameraRecorder:
 
     def start(self) -> None:
         self.ensure_directories()
+        # stderr goes to a per-camera file (truncated each start), NEVER a pipe.
+        # A long-lived child whose pipe nobody drains blocks forever once the
+        # 64 KiB kernel buffer fills — and ffmpeg is chatty on a flaky RTSP
+        # source (non-monotonic DTS warnings are logged at error level, so
+        # -loglevel error does not suppress them). It would then stop recording
+        # while still running, so poll() stays None and the supervisor reports
+        # it healthy: a camera silently dead with a green light in the UI.
+        self._close_log()
+        try:
+            self._log_handle = open(self.log_path, "w")
+            stderr_target: Any = self._log_handle
+        except OSError:
+            stderr_target = subprocess.DEVNULL
         self.process = subprocess.Popen(
             self._command(),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stderr=stderr_target,
             text=True,
         )
         self.started_at = time.time()
         log.info("recording %s -> %s", self.camera_id, self.directory)
 
+    def _close_log(self) -> None:
+        if self._log_handle is not None:
+            try:
+                self._log_handle.close()
+            except Exception:
+                pass
+            self._log_handle = None
+
     def stop(self) -> None:
         if not self.process:
+            self._close_log()
             return
         self.process.terminate()
         try:
@@ -144,6 +179,7 @@ class CameraRecorder:
             self.process.wait(timeout=5)
         self.process = None
         self.started_at = None
+        self._close_log()
 
     def check(self) -> None:
         """Restart the process if it died, with backoff.
@@ -164,12 +200,8 @@ class CameraRecorder:
                 self.last_error = None
             return
 
-        stderr = ""
-        if self.process.stderr:
-            try:
-                stderr = self.process.stderr.read() or ""
-            except Exception:
-                pass
+        self._close_log()
+        stderr = self._tail_log()
         self.last_error = stderr.strip().splitlines()[-1] if stderr.strip() else None
         self.restarts += 1
         log.warning(
