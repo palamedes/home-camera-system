@@ -1,0 +1,207 @@
+"""Coverage for the features built during the Aug 2026 sprint, which shipped
+without tests: the automation hook, crop virtual cameras, unified grid ordering,
+and per-camera storage targeting.
+"""
+
+import pytest
+
+from conftest import add_camera
+
+
+# --- automation hook (token-authed, session-exempt) ------------------------
+
+@pytest.fixture
+def light(app_module, monkeypatch):
+    """Capture set_light calls instead of reaching for a real camera."""
+    calls = []
+    monkeypatch.setattr(app_module.camera_control, "set_light",
+                        lambda camera, on: calls.append(on))
+    monkeypatch.setattr(app_module.camera_control, "get_controls",
+                        lambda camera: {"light": False, "night_vision": None})
+    return calls
+
+
+def _token(admin_client):
+    return admin_client.get("/api/automation/token").json()["token"]
+
+
+def test_hook_rejects_a_missing_token(client, admin_client, db, light):
+    add_camera(db, "front")
+    _token(admin_client)
+    r = client.get("/api/hook/cameras/front/light?state=on")
+    assert r.status_code == 403
+    assert light == []
+
+
+def test_hook_rejects_a_wrong_token(client, admin_client, db, light):
+    add_camera(db, "front")
+    _token(admin_client)
+    r = client.get("/api/hook/cameras/front/light?state=on&token=nope")
+    assert r.status_code == 403
+    assert light == []
+
+
+def test_hook_works_without_a_session(client, admin_client, db, light):
+    """The whole point: a switch or Home Assistant has no login."""
+    add_camera(db, "front")
+    tok = _token(admin_client)
+    r = client.get(f"/api/hook/cameras/front/light?state=on&token={tok}")
+    assert r.status_code == 200 and r.json()["light"] is True
+    assert light == [True]
+
+
+def test_hook_toggle_uses_current_state(client, admin_client, db, light):
+    add_camera(db, "front")
+    tok = _token(admin_client)
+    # get_controls reports light=False, so a toggle must turn it on.
+    r = client.get(f"/api/hook/cameras/front/light?state=toggle&token={tok}")
+    assert r.json()["light"] is True
+
+
+def test_hook_rejects_an_unknown_state(client, admin_client, db, light):
+    add_camera(db, "front")
+    tok = _token(admin_client)
+    r = client.get(f"/api/hook/cameras/front/light?state=explode&token={tok}")
+    assert r.status_code == 400
+    assert light == []
+
+
+def test_hook_404s_for_an_unknown_camera(client, admin_client, db, light):
+    tok = _token(admin_client)
+    r = client.get(f"/api/hook/cameras/ghost/light?state=on&token={tok}")
+    assert r.status_code == 404
+
+
+def test_token_is_not_readable_without_a_login(client, app_module, db):
+    # Seed a user first: with an empty user table the app is in first-run setup
+    # mode and redirects everything to /setup, which would mask the real answer.
+    from conftest import make_user
+    make_user(app_module, db, "admin", "password123")
+    r = client.get("/api/automation/token", follow_redirects=False)
+    assert r.status_code == 401
+
+
+def test_viewer_cannot_read_or_rotate_the_token(viewer_client):
+    assert viewer_client.get("/api/automation/token").status_code == 403
+    assert viewer_client.post("/api/automation/token").status_code == 403
+
+
+def test_regenerating_the_token_revokes_the_old_one(client, admin_client, db, light):
+    add_camera(db, "front")
+    old = _token(admin_client)
+    new = admin_client.post("/api/automation/token").json()["token"]
+    assert new != old
+
+    assert client.get(f"/api/hook/cameras/front/light?state=on&token={old}").status_code == 403
+    assert client.get(f"/api/hook/cameras/front/light?state=on&token={new}").status_code == 200
+
+
+# --- crop virtual cameras --------------------------------------------------
+
+def test_crop_virtual_round_trips_its_rectangle(admin_client, db):
+    add_camera(db, "wide")
+    rect = {"x": 0.25, "y": 0.1, "w": 0.4, "h": 0.35}
+    r = admin_client.post("/api/cameras/wide/virtual",
+                          json={"name": "Front door", "mode": "crop", "calib": rect})
+    assert r.status_code == 200
+    vid = r.json()["id"]
+
+    got = admin_client.get(f"/api/virtual/{vid}").json()
+    assert got["mode"] == "crop"
+    assert got["crop"] == rect
+
+
+def test_virtual_defaults_to_fisheye_mode(admin_client, db):
+    add_camera(db, "dome", fisheye=1)
+    vid = admin_client.post("/api/cameras/dome/virtual",
+                            json={"name": "North", "yaw": 0.5}).json()["id"]
+    got = admin_client.get(f"/api/virtual/{vid}").json()
+    assert got["mode"] == "fisheye"
+    assert got["crop"] == {}
+
+
+def test_unknown_virtual_mode_is_rejected(admin_client, db):
+    add_camera(db, "wide")
+    r = admin_client.post("/api/cameras/wide/virtual",
+                          json={"name": "Bad", "mode": "hologram"})
+    assert r.status_code == 400
+
+
+def test_virtual_requires_a_name(admin_client, db):
+    add_camera(db, "wide")
+    r = admin_client.post("/api/cameras/wide/virtual", json={"name": "  ", "mode": "crop"})
+    assert r.status_code == 400
+
+
+# --- unified camera + virtual ordering -------------------------------------
+
+def test_cameras_and_virtuals_share_one_order(admin_client, db):
+    add_camera(db, "a", "A")
+    add_camera(db, "b", "B")
+    vid = db.add_virtual_camera("a", "Virtual", 0.0, 0.0, 1.5, "{}")
+
+    r = admin_client.post("/api/cameras/order",
+                          json={"order": [f"vcam:{vid}", "cam:b", "cam:a"]})
+    assert r.status_code == 200 and r.json()["count"] == 3
+
+    assert db.virtual_camera(vid)["sort_order"] == 0
+    assert db.camera("b")["sort_order"] == 1
+    assert db.camera("a")["sort_order"] == 2
+
+
+def test_order_ignores_unknown_tokens(admin_client, db):
+    add_camera(db, "a", "A")
+    r = admin_client.post("/api/cameras/order",
+                          json={"order": ["cam:ghost", "vcam:999", "cam:a"]})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert db.camera("a")["sort_order"] == 0
+
+
+def test_order_rejects_a_non_list(admin_client, db):
+    assert admin_client.post("/api/cameras/order", json={"order": "cam:a"}).status_code == 400
+
+
+def test_viewer_cannot_reorder(viewer_client, db):
+    add_camera(db, "a", "A")
+    assert viewer_client.post("/api/cameras/order",
+                              json={"order": ["cam:a"]}).status_code == 403
+
+
+def test_new_camera_sorts_after_existing_ones(db):
+    add_camera(db, "a", "A")
+    db.set_camera_sort([(5, "a")])
+    add_camera(db, "b", "B")
+    assert db.camera("b")["sort_order"] > db.camera("a")["sort_order"]
+
+
+# --- per-camera storage target ---------------------------------------------
+
+def test_preferred_volume_round_trips(admin_client, db):
+    add_camera(db, "front")
+    assert admin_client.patch("/api/cameras/front",
+                              json={"preferred_volume": "/mnt/nas"}).status_code == 200
+    assert db.camera("front")["preferred_volume"] == "/mnt/nas"
+
+
+def test_empty_preferred_volume_clears_the_pin(admin_client, db):
+    add_camera(db, "front", preferred_volume="/mnt/nas")
+    admin_client.patch("/api/cameras/front", json={"preferred_volume": ""})
+    assert db.camera("front")["preferred_volume"] is None
+
+
+def test_recorder_falls_back_when_the_pinned_volume_is_gone(app_module, db):
+    """A pin must never stop a camera recording — an absent drive falls back to
+    the pool rather than failing."""
+    from nvr.recorder import RecordingService
+    svc = RecordingService(app_module.cfg, db, app_module.go2rtc)
+    camera = {"id": "front", "preferred_volume": "/definitely/not/mounted"}
+    fallback = app_module.cfg.storage.recordings_dir
+    assert svc._volume_for(camera, fallback) == fallback
+
+
+def test_recorder_honours_a_mounted_pin(app_module, db):
+    from nvr.recorder import RecordingService
+    svc = RecordingService(app_module.cfg, db, app_module.go2rtc)
+    vol = app_module.cfg.storage.volumes[0]
+    camera = {"id": "front", "preferred_volume": str(vol.path)}
+    assert svc._volume_for(camera, None) == vol.path
