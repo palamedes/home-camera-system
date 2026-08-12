@@ -270,7 +270,11 @@ class RetentionService:
                 disk_total += vtotal
 
         span_seconds = 0.0
-        for camera in self.db.cameras():
+        # include_archived: `total` above counts every segment, archived ones
+        # included, so the span must too — otherwise archived footage inflates
+        # bytes_per_day (or, if the only camera is archived, reports stored
+        # bytes with a rate of zero).
+        for camera in self.db.cameras(include_archived=True):
             bounds = self.db.segment_bounds(camera["id"])
             if bounds:
                 span_seconds = max(span_seconds, bounds[1] - bounds[0])

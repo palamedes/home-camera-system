@@ -273,9 +273,20 @@ class Database:
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._write_lock:
             conn = self.connect()
-            cur = conn.execute(sql, tuple(params))
-            conn.commit()
-            return cur
+            try:
+                cur = conn.execute(sql, tuple(params))
+                conn.commit()
+                return cur
+            except BaseException:
+                # Roll back, or this thread's cached connection stays inside an
+                # open write transaction holding the WAL writer lock — for the
+                # life of the process. Every other writer (segment indexer,
+                # retention, login) would then block for the full busy timeout
+                # and fail with "database is locked", each swallowed by a
+                # background thread's except-and-retry, so recording and pruning
+                # would quietly stop with nothing but slow log noise.
+                conn.rollback()
+                raise
 
     # ---- users -----------------------------------------------------------
 
@@ -372,8 +383,14 @@ class Database:
     def add_camera(self, **fields: Any) -> None:
         fields.setdefault("created_at", int(time.time()))
         if "sort_order" not in fields:
-            # New cameras land at the end of the grid, not the top.
-            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM cameras")
+            # New cameras land at the end of the grid, not the top. Cameras and
+            # virtuals share one order space, so take the max across both or a
+            # new camera collides with an existing virtual and lands mid-grid.
+            row = self.one(
+                "SELECT COALESCE(MAX(m), -1) + 1 AS n FROM ("
+                "SELECT MAX(sort_order) AS m FROM cameras "
+                "UNION ALL SELECT MAX(sort_order) FROM virtual_cameras)"
+            )
             fields["sort_order"] = row["n"] if row else 0
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)

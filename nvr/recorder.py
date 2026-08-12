@@ -196,15 +196,41 @@ def probe_duration(path: Path) -> tuple[float | None, str | None]:
     return duration, codec
 
 
-def probe_segment(path: Path) -> tuple[float | None, str | None, bool]:
-    """As probe_duration, plus whether ffprobe actually reached a verdict.
+# ffprobe stderr fragments that mean "I opened this file and its CONTENTS are
+# malformed" — as opposed to "I could not read this file at all". Only the
+# former justifies deleting a segment. Everything else (Permission denied,
+# Input/output error, No such file, ENOMEM) leaves the file alone, because an
+# intact recording on a failing disk or with wrong ownership must never be
+# mistaken for a corrupt one.
+_CORRUPT_SIGNATURES = (
+    "moov atom not found",
+    "invalid data found when processing input",
+    "could not find codec parameters",
+    "invalid argument",
+)
 
-    The third element is True when ffprobe ran to completion — so a None
-    duration means the file genuinely is unreadable — and False when ffprobe
-    itself could not run (missing binary, timeout, killed). Deleting a file is
-    only ever safe on a True verdict: if ffprobe were broken, a False verdict
-    would otherwise condemn every segment on disk.
+
+def probe_segment(path: Path) -> tuple[float | None, str | None, bool]:
+    """As probe_duration, plus whether ffprobe positively judged the CONTENTS bad.
+
+    The third element ("condemned") is True only when ffprobe read the file and
+    found it malformed. It is False whenever we could not get a real verdict —
+    ffprobe missing, timed out, or unable to open the file — because deleting is
+    irreversible and those cases say nothing about whether the footage is good.
+
+    This distinction is subtle and load-bearing: ffprobe exits non-zero and
+    prints an empty JSON object for BOTH a truncated MP4 and a perfectly good
+    file it lacks permission to open, so the exit code and stdout alone cannot
+    tell them apart. Only stderr can.
     """
+    # Pre-flight: if we cannot read even one byte, we have no opinion on the
+    # contents. Catches permission problems and I/O errors before ffprobe runs.
+    try:
+        with open(path, "rb") as handle:
+            handle.read(1)
+    except OSError:
+        return None, None, False
+
     try:
         result = subprocess.run(
             [
@@ -217,12 +243,15 @@ def probe_segment(path: Path) -> tuple[float | None, str | None, bool]:
         )
     except Exception:
         return None, None, False        # ffprobe unavailable — no verdict
+
+    def condemned() -> bool:
+        stderr = (result.stderr or "").lower()
+        return any(sig in stderr for sig in _CORRUPT_SIGNATURES)
+
     try:
         payload = json.loads(result.stdout or "{}")
     except Exception:
-        # ffprobe ran but emitted nothing parseable: that is a verdict on the
-        # file (a truncated MP4 with no moov atom prints an error and no JSON).
-        return None, None, True
+        return None, None, condemned()
 
     duration = None
     raw = (payload.get("format") or {}).get("duration")
@@ -237,7 +266,11 @@ def probe_segment(path: Path) -> tuple[float | None, str | None, bool]:
         if stream.get("codec_type") == "video":
             codec = stream.get("codec_name")
             break
-    return duration, codec, True
+    if duration:
+        return duration, codec, False   # readable; "condemned" is moot
+    # Parsed JSON but no usable duration: only condemn if ffprobe said the
+    # contents are bad. A silent empty result is left alone deliberately.
+    return duration, codec, condemned()
 
 
 class RecordingService:
@@ -401,7 +434,12 @@ class RecordingService:
         """Add closed-but-unindexed segment files to the database."""
         added = 0
         now = time.time()
-        for camera in self.db.cameras():
+        # include_archived: indexing is read-only with respect to streaming and
+        # recording, and an archived camera's last segment closes *after* it is
+        # flagged. Skipping them would strand that final minute — unplayable in
+        # History and invisible to retention, which only prunes indexed rows.
+        # Retention already reads the same set.
+        for camera in self.db.cameras(include_archived=True):
             camera_id = camera["id"]
             known = self.db.known_paths(camera_id)
             # Footage for one camera can be spread across every pool volume, so
@@ -424,7 +462,7 @@ class RecordingService:
                         path.unlink(missing_ok=True)
                         continue
 
-                    duration, codec, probed = probe_segment(path)
+                    duration, codec, condemned = probe_segment(path)
                     if not duration or duration <= 0:
                         # Unreadable: usually a segment cut short by a crash.
                         # Never index it, or the timeline would advertise
@@ -433,13 +471,14 @@ class RecordingService:
                         # These used to be left on disk forever: retention only
                         # prunes *indexed* segments, so they leaked and made the
                         # storage figures under-report real usage. Delete them —
-                        # but only on a positive ffprobe verdict (never when
-                        # ffprobe itself failed to run, which would condemn every
-                        # segment at once) and only once the file is far too old
-                        # to still be mid-write. A rebuilt/restored database is
-                        # safe under this rule: valid footage probes fine and is
-                        # simply re-indexed, never deleted.
-                        if probed and now - stat.st_mtime > CORRUPT_MAX_AGE:
+                        # but only when ffprobe positively judged the CONTENTS
+                        # malformed (never merely because we failed to read the
+                        # file: an intact recording on a failing disk or with
+                        # the wrong owner must survive), and only once it is far
+                        # too old to still be mid-write. A rebuilt/restored
+                        # database is safe under this rule: valid footage probes
+                        # fine and is simply re-indexed, never deleted.
+                        if condemned and now - stat.st_mtime > CORRUPT_MAX_AGE:
                             log.warning(
                                 "deleting unreadable segment %s (%d bytes)",
                                 path, stat.st_size,

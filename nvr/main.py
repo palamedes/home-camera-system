@@ -486,6 +486,11 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
         parent = db.camera(v["parent_id"])
         if not parent or not can_view(request, parent):
             continue
+        # An archived parent has no go2rtc stream any more, so its virtual views
+        # would render as permanently dead tiles on every grid — and _online()
+        # would still label them online. Removing a camera removes its views.
+        if parent["archived"]:
+            continue
         if not admin and not v["viewer_visible"]:
             continue
         stream = (
@@ -1329,7 +1334,9 @@ async def api_hook_light(camera_id: str, request: Request):
     if not token or not secrets.compare_digest(str(token), _automation_token()):
         return JSONResponse({"error": "bad token"}, status_code=403)
     camera = db.camera(camera_id)
-    if not camera:
+    # db.camera() resolves archived rows so History keeps working; a removed
+    # camera must not still be controllable from a scene switch.
+    if not camera or camera["archived"]:
         return JSONResponse({"error": "camera not found"}, status_code=404)
     if state not in ("", "on", "off", "toggle"):
         return JSONResponse({"error": "state must be on, off or toggle"}, status_code=400)

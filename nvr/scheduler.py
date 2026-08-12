@@ -143,7 +143,11 @@ class SchedulerService:
         changed = False
         for cam_id, want in wants.items():
             cam = self.db.camera(cam_id)
-            if cam is None:
+            if cam is None or cam["archived"]:
+                # db.camera() resolves archived rows on purpose (History needs
+                # them), so a removed camera's schedules would otherwise keep
+                # firing — flipping its record flag so a later Restore starts
+                # recording unasked, with no way to see or delete the rule.
                 continue
             if int(cam["record"] or 0) != want:
                 # Re-asserts the schedule even against a manual toggle, and
@@ -207,7 +211,9 @@ class SchedulerService:
             )
             return
         cam = self.db.camera(camera_id)
-        if cam is None:
+        if cam is None or cam["archived"]:
+            # A camera removed with "Keep footage" must be inert: without this
+            # its floodlight still switches on every evening.
             return
         try:
             fn(cam)
