@@ -168,6 +168,52 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT NOT NULL
 );
 
+-- Calendars. A household calendar: each person can keep their own, and there is
+-- at least one shared calendar everybody sees and can add to (owner_user_id
+-- NULL). The iCloud columns are unused until CalDAV sync lands, but they live
+-- here now so turning sync on is not a schema migration.
+CREATE TABLE IF NOT EXISTS calendars (
+    id            TEXT    PRIMARY KEY,
+    name          TEXT    NOT NULL,
+    color         TEXT    NOT NULL DEFAULT '#2563eb',
+    -- NULL = shared with the whole household.
+    owner_user_id INTEGER,
+    -- 'local' | 'icloud'
+    source        TEXT    NOT NULL DEFAULT 'local',
+    remote_id     TEXT,
+    sync_token    TEXT,
+    last_sync_utc REAL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id TEXT    NOT NULL,
+    -- iCalendar UID; generated locally, preserved for anything from iCloud so
+    -- the same event is never duplicated on a re-sync.
+    uid         TEXT    NOT NULL UNIQUE,
+    title       TEXT    NOT NULL,
+    description TEXT,
+    location    TEXT,
+    -- Epoch seconds, UTC. All-day events sit at local midnight and set all_day.
+    start_utc   REAL    NOT NULL,
+    end_utc     REAL    NOT NULL,
+    all_day     INTEGER NOT NULL DEFAULT 0,
+    -- Raw RRULE, kept verbatim for round-tripping. Not expanded yet.
+    rrule       TEXT,
+    tzid        TEXT,
+    source      TEXT    NOT NULL DEFAULT 'local',
+    etag        TEXT,
+    href        TEXT,
+    created_by  INTEGER,
+    updated_utc REAL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_window
+    ON calendar_events (start_utc, end_utc);
+
 -- Non-camera devices Sentry can control over plain HTTP on the LAN: relays and
 -- smart switches (Shelly first, but the driver is just a name here). Kept
 -- deliberately generic — a driver knows how to build the on/off/toggle request
@@ -516,6 +562,97 @@ class Database:
 
     def delete_virtual_camera(self, vid: int) -> None:
         self.execute("DELETE FROM virtual_cameras WHERE id = ?", (vid,))
+
+    # ---- calendars --------------------------------------------------------
+
+    def calendars(self, user_id: int | None = None) -> list[sqlite3.Row]:
+        """Calendars a user may see: the shared household ones plus their own.
+
+        Passing None returns every calendar (for admin listings and the sync
+        loop); it is never used to answer a browser request directly.
+        """
+        if user_id is None:
+            return self.query("SELECT * FROM calendars ORDER BY sort_order, name")
+        return self.query(
+            "SELECT * FROM calendars WHERE owner_user_id IS NULL OR owner_user_id = ? "
+            "ORDER BY sort_order, name",
+            (user_id,),
+        )
+
+    def calendar(self, calendar_id: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM calendars WHERE id = ?", (calendar_id,))
+
+    def add_calendar(self, **fields: Any) -> None:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM calendars")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        self.execute(
+            f"INSERT INTO calendars ({cols}) VALUES ({marks})", tuple(fields.values())
+        )
+
+    def update_calendar(self, calendar_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE calendars SET {assigns} WHERE id = ?",
+            (*fields.values(), calendar_id),
+        )
+
+    def delete_calendar(self, calendar_id: str) -> None:
+        self.execute("DELETE FROM calendars WHERE id = ?", (calendar_id,))
+        # Its events go with it, or they become invisible orphans no UI can reach.
+        self.execute("DELETE FROM calendar_events WHERE calendar_id = ?", (calendar_id,))
+
+    # ---- calendar events --------------------------------------------------
+
+    def calendar_events(
+        self, start_utc: float, end_utc: float, calendar_ids: list[str] | None = None
+    ) -> list[sqlite3.Row]:
+        """Events overlapping [start, end). An event counts if any part of it
+        falls in the window, so a multi-day trip shows on every day it covers."""
+        sql = (
+            "SELECT * FROM calendar_events "
+            "WHERE start_utc < ? AND end_utc > ?"
+        )
+        params: list[Any] = [end_utc, start_utc]
+        if calendar_ids is not None:
+            if not calendar_ids:
+                return []
+            marks = ", ".join("?" for _ in calendar_ids)
+            sql += f" AND calendar_id IN ({marks})"
+            params.extend(calendar_ids)
+        return self.query(sql + " ORDER BY start_utc", tuple(params))
+
+    def calendar_event(self, event_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM calendar_events WHERE id = ?", (event_id,))
+
+    def add_calendar_event(self, **fields: Any) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        fields.setdefault("updated_utc", time.time())
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        cur = self.execute(
+            f"INSERT INTO calendar_events ({cols}) VALUES ({marks})",
+            tuple(fields.values()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def update_calendar_event(self, event_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields.setdefault("updated_utc", time.time())
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE calendar_events SET {assigns} WHERE id = ?",
+            (*fields.values(), event_id),
+        )
+
+    def delete_calendar_event(self, event_id: int) -> None:
+        self.execute("DELETE FROM calendar_events WHERE id = ?", (event_id,))
 
     # ---- devices (relays / smart switches) --------------------------------
 
