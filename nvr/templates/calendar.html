@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Calendar — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Calendar</h1>
+    <p id="cal-subtitle">The household calendar</p>
+  </div>
+  <div class="row" style="flex: 0 0 auto; gap: 8px; align-items: center;">
+    <button class="btn btn-sm" id="cal-prev" aria-label="Previous month">&lsaquo;</button>
+    <button class="btn btn-sm" id="cal-today">Today</button>
+    <button class="btn btn-sm" id="cal-next" aria-label="Next month">&rsaquo;</button>
+    <button class="btn btn-sm btn-primary" id="cal-add">Add event</button>
+  </div>
+</div>
+
+<div class="cal-layout">
+  <div class="panel cal-main">
+    <div class="panel-pad cal-head">
+      <h2 id="cal-month">&nbsp;</h2>
+      <div class="cal-legend" id="cal-legend"></div>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+  </div>
+
+  <aside class="panel cal-side" id="cal-side">
+    <div class="panel-pad">
+      <h2 id="cal-day-title">Select a day</h2>
+      <div id="cal-day-events" class="cal-day-events">
+        <p class="muted small">Click a day to see what's on.</p>
+      </div>
+    </div>
+  </aside>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('calendar.js') }}"></script>
+<script>initCalendar();</script>
+{% endblock %}

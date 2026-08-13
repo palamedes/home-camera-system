@@ -28,6 +28,7 @@
     <a href="/" class="{{ 'active' if path == '/' }}">Dashboard</a>
     <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') }}">Cameras</a>
     <a href="/clips" class="{{ 'active' if path.startswith('/clips') }}">Clips</a>
+    <a href="/calendar" class="{{ 'active' if path.startswith('/calendar') }}">Calendar</a>
     {% if is_admin %}
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') or path.startswith('/discover') }}">Settings</a>
     {% endif %}

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import secrets
 import threading
 import time
+import uuid
 
 import httpx
 from contextlib import asynccontextmanager
@@ -1419,6 +1421,234 @@ async def api_hook_light(camera_id: str, request: Request):
     except camera_control.CameraControlError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"ok": True, "light": want})
+
+
+# ---------------------------------------------------------------------------
+# Calendar — a household calendar. Everyone shares the family calendar; each
+# person may also keep private ones. Deliberately trusting, like the house it
+# runs in: anyone signed in can add to a shared calendar.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_shared_calendar() -> None:
+    """There is always somewhere to put an event. Idempotent."""
+    if any(c["owner_user_id"] is None for c in db.calendars()):
+        return
+    db.add_calendar(id="family", name="Family", color="#2563eb", owner_user_id=None)
+
+
+def _calendar_dict(row: Any, user_id: int | None) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "color": row["color"],
+        "shared": row["owner_user_id"] is None,
+        "mine": row["owner_user_id"] == user_id,
+        "enabled": bool(row["enabled"]),
+    }
+
+
+def _calendar_event_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "calendar_id": row["calendar_id"],
+        "title": row["title"],
+        "description": row["description"],
+        "location": row["location"],
+        "start": row["start_utc"],
+        "end": row["end_utc"],
+        "all_day": bool(row["all_day"]),
+    }
+
+
+def _visible_calendars(user: Any) -> list[Any]:
+    _ensure_shared_calendar()
+    return db.calendars(user["id"] if user else None)
+
+
+def _may_write_calendar(calendar: Any, user: Any) -> bool:
+    """Shared calendars are writable by anyone signed in — that is the point of
+    a family calendar. A private one is its owner's alone (an admin can still
+    delete the calendar itself, but does not get to read or edit inside it)."""
+    if calendar is None or user is None:
+        return False
+    return calendar["owner_user_id"] is None or calendar["owner_user_id"] == user["id"]
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request):
+    _ensure_shared_calendar()
+    return render(request, "calendar.html")
+
+
+@app.get("/api/calendar/calendars")
+def api_calendars(request: Request):
+    user = auth.current_user(request)
+    return JSONResponse([
+        _calendar_dict(c, user["id"] if user else None)
+        for c in _visible_calendars(user)
+    ])
+
+
+@app.post("/api/calendar/calendars")
+async def api_add_calendar(request: Request):
+    user = auth.current_user(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "A name is required."}, status_code=400)
+    shared = bool(payload.get("shared"))
+    if shared and not auth.is_admin(user):
+        return JSONResponse(
+            {"error": "Only an admin can add a shared calendar."}, status_code=403
+        )
+    base = slugify(name) or "calendar"
+    candidate, suffix = base, 2
+    while db.calendar(candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    db.add_calendar(
+        id=candidate, name=name,
+        color=(payload.get("color") or "#2563eb"),
+        owner_user_id=None if shared else user["id"],
+    )
+    return JSONResponse({"id": candidate, "name": name})
+
+
+@app.patch("/api/calendar/calendars/{calendar_id}")
+async def api_update_calendar(calendar_id: str, request: Request):
+    user = auth.current_user(request)
+    calendar = db.calendar(calendar_id)
+    if not calendar or not _may_write_calendar(calendar, user):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields = {k: v for k, v in payload.items() if k in ("name", "color", "enabled")}
+    if "enabled" in fields:
+        fields["enabled"] = 1 if fields["enabled"] else 0
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_calendar(calendar_id, **fields)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/calendar/calendars/{calendar_id}")
+def api_delete_calendar(request: Request, calendar_id: str):
+    user = auth.current_user(request)
+    calendar = db.calendar(calendar_id)
+    if not calendar:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    shared = calendar["owner_user_id"] is None
+    allowed = auth.is_admin(user) if shared else calendar["owner_user_id"] == user["id"]
+    if not allowed:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    db.delete_calendar(calendar_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/calendar/events")
+def api_calendar_events(request: Request, start: float, end: float):
+    """Events overlapping a window, from the calendars this user can see."""
+    if not (math.isfinite(start) and math.isfinite(end)) or end <= start:
+        return JSONResponse({"error": "bad window"}, status_code=400)
+    user = auth.current_user(request)
+    visible = [c["id"] for c in _visible_calendars(user) if c["enabled"]]
+    rows = db.calendar_events(start, end, calendar_ids=visible)
+    return JSONResponse([_calendar_event_dict(r) for r in rows])
+
+
+def _event_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    title = (payload.get("title") or "").strip()
+    if not title:
+        return None, "A title is required."
+    try:
+        start = float(payload.get("start"))
+        end = float(payload.get("end"))
+    except (TypeError, ValueError):
+        return None, "start and end must be timestamps"
+    if not (math.isfinite(start) and math.isfinite(end)):
+        return None, "start and end must be real times"
+    if end <= start:
+        return None, "the end must come after the start"
+    return {
+        "title": title,
+        "description": (payload.get("description") or "").strip() or None,
+        "location": (payload.get("location") or "").strip() or None,
+        "start_utc": start,
+        "end_utc": end,
+        "all_day": 1 if payload.get("all_day") else 0,
+    }, None
+
+
+@app.post("/api/calendar/events")
+async def api_add_calendar_event(request: Request):
+    user = auth.current_user(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    # Every entry point guarantees somewhere to write, not just the ones that
+    # happen to list calendars first.
+    _ensure_shared_calendar()
+    calendar = db.calendar(payload.get("calendar_id") or "")
+    if not calendar or not _may_write_calendar(calendar, user):
+        return JSONResponse({"error": "unknown calendar"}, status_code=404)
+    fields, error = _event_payload(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    event_id = db.add_calendar_event(
+        calendar_id=calendar["id"],
+        uid=f"{uuid.uuid4()}@sentry.local",
+        created_by=user["id"] if user else None,
+        **fields,
+    )
+    return JSONResponse(_calendar_event_dict(db.calendar_event(event_id)))
+
+
+@app.patch("/api/calendar/events/{event_id}")
+async def api_update_calendar_event(event_id: int, request: Request):
+    user = auth.current_user(request)
+    event = db.calendar_event(event_id)
+    if not event or not _may_write_calendar(db.calendar(event["calendar_id"]), user):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    # Merge over the stored row so a partial edit keeps the rest.
+    merged = {
+        "title": payload.get("title", event["title"]),
+        "description": payload.get("description", event["description"]),
+        "location": payload.get("location", event["location"]),
+        "start": payload.get("start", event["start_utc"]),
+        "end": payload.get("end", event["end_utc"]),
+        "all_day": payload.get("all_day", bool(event["all_day"])),
+    }
+    fields, error = _event_payload(merged)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    if "calendar_id" in payload:
+        target = db.calendar(payload["calendar_id"])
+        if not target or not _may_write_calendar(target, user):
+            return JSONResponse({"error": "unknown calendar"}, status_code=404)
+        fields["calendar_id"] = target["id"]
+    db.update_calendar_event(event_id, **fields)
+    return JSONResponse(_calendar_event_dict(db.calendar_event(event_id)))
+
+
+@app.delete("/api/calendar/events/{event_id}")
+def api_delete_calendar_event(request: Request, event_id: int):
+    user = auth.current_user(request)
+    event = db.calendar_event(event_id)
+    if not event or not _may_write_calendar(db.calendar(event["calendar_id"]), user):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_calendar_event(event_id)
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------

@@ -67,8 +67,8 @@ def db(app_module):
     """The live app database, wiped clean before each test."""
     d = app_module.db
     for table in ("clips", "virtual_cameras", "segments", "schedules",
-                  "events", "app_settings", "devices", "cameras", "sessions",
-                  "users"):
+                  "events", "app_settings", "devices", "calendar_events",
+                  "calendars", "cameras", "sessions", "users"):
         d.execute(f"DELETE FROM {table}")
     return d
 
