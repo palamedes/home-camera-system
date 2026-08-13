@@ -39,7 +39,9 @@ try:  # pragma: no cover - trivial import guard
 except Exception:  # noqa: BLE001 - any import failure means "not available"
     camera_control = None  # type: ignore[assignment]
 
-VALID_ACTIONS = frozenset({"record", "light", "nightvision"})
+from . import devices
+
+VALID_ACTIONS = frozenset({"record", "light", "nightvision", "power"})
 VALID_NV_MODES = frozenset({"auto", "color", "bw"})
 
 # How often the loop re-evaluates. Minute-resolution windows don't need finer.
@@ -91,6 +93,10 @@ class SchedulerService:
         self._record_state: dict[str, int] = {}
         self._light_state: dict[str, bool] = {}
         self._nv_inside: dict[int, bool] = {}
+        # Devices record their state only after the relay actually accepted the
+        # command, so an unreachable relay is retried on the next tick instead
+        # of being assumed applied.
+        self._device_state: dict[str, bool] = {}
 
     def start(self) -> None:
         self._stop.clear()
@@ -125,6 +131,54 @@ class SchedulerService:
         self._apply_record(rows, weekday, minute)
         self._apply_light(rows, weekday, minute)
         self._apply_nightvision(rows, weekday, minute)
+        self._apply_device_power(rows, weekday, minute)
+
+    def _apply_device_power(self, rows: list[Any], weekday: int, minute: int) -> None:
+        """Switch relays on/off for their windows.
+
+        Same aggregate-then-edge-trigger shape as lights: a device is on if ANY
+        of its windows is active, and we only talk to it when that flips. The
+        difference is that the new state is recorded only once the device has
+        accepted it, so a relay that was unplugged gets retried next tick rather
+        than being silently written off.
+
+        A power schedule is authoritative, like any timer: "on 18:00-23:00" also
+        means "off the rest of the time", so a scheduled device is asserted off
+        outside its windows. Because it is edge-triggered, that assertion happens
+        only when the desired state changes (or on the first pass after a
+        restart) — so switching the light on by hand at midnight sticks until the
+        next window boundary rather than being fought every 30 seconds.
+        """
+        wants: dict[str, bool] = {}
+        for s in rows:
+            if s["action"] != "power" or not s["device_id"]:
+                continue
+            active = in_window(
+                s["days"], s["start_min"], s["end_min"], weekday, minute
+            )
+            wants[s["device_id"]] = wants.get(s["device_id"], False) or active
+
+        for device_id, want in wants.items():
+            if self._device_state.get(device_id) == want:
+                continue
+            device = self.db.device(device_id)
+            if device is None or not device["enabled"]:
+                continue
+            try:
+                devices.set_state(device, want)
+            except Exception as exc:
+                # Left out of _device_state, so the next pass tries again.
+                log.warning("schedule could not switch %s: %s", device_id, exc)
+                self.db.update_device(
+                    device_id, last_error=str(exc), last_seen=time.time()
+                )
+                continue
+            self._device_state[device_id] = want
+            self.db.update_device(
+                device_id, last_state=1 if want else 0,
+                last_seen=time.time(), last_error=None,
+            )
+            log.info("schedule switched %s %s", device_id, "on" if want else "off")
 
     def _apply_record(self, rows: list[Any], weekday: int, minute: int) -> None:
         # Aggregate per camera: a camera records if ANY of its record windows is

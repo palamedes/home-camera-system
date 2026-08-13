@@ -126,8 +126,10 @@ CREATE INDEX IF NOT EXISTS idx_clips_created ON clips(created_at);
 -- server local time; end_min < start_min means the window wraps past midnight.
 CREATE TABLE IF NOT EXISTS schedules (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    camera_id  TEXT    NOT NULL,
-    -- 'record' | 'light' | 'nightvision'
+    -- Exactly one target is set; the other is NULL.
+    camera_id  TEXT,
+    device_id  TEXT,
+    -- Camera: 'record' | 'light' | 'nightvision'. Device: 'power'.
     action     TEXT    NOT NULL,
     -- 7-bit weekday mask: bit0=Mon .. bit6=Sun.
     days       INTEGER NOT NULL DEFAULT 127,
@@ -268,6 +270,40 @@ class Database:
                 self.execute(
                     "UPDATE virtual_cameras SET sort_order = ? WHERE id = ?",
                     (base + i, row["id"]),
+                )
+
+        # Schedules gained device targets, which also means camera_id had to
+        # stop being NOT NULL. SQLite cannot relax a column constraint in place,
+        # so the table is rebuilt — in ONE transaction via executescript, because
+        # a half-applied rebuild would lose every schedule.
+        sched_cols = {row["name"] for row in self.query("PRAGMA table_info(schedules)")}
+        if sched_cols and "device_id" not in sched_cols:
+            conn = self.connect()
+            with self._write_lock:
+                conn.executescript(
+                    """
+                    BEGIN;
+                    CREATE TABLE schedules_new (
+                        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                        camera_id  TEXT,
+                        device_id  TEXT,
+                        action     TEXT    NOT NULL,
+                        days       INTEGER NOT NULL DEFAULT 127,
+                        start_min  INTEGER NOT NULL,
+                        end_min    INTEGER NOT NULL,
+                        value      TEXT    NOT NULL DEFAULT 'on',
+                        enabled    INTEGER NOT NULL DEFAULT 1,
+                        created_at INTEGER NOT NULL
+                    );
+                    INSERT INTO schedules_new
+                        (id, camera_id, action, days, start_min, end_min,
+                         value, enabled, created_at)
+                    SELECT id, camera_id, action, days, start_min, end_min,
+                           value, enabled, created_at FROM schedules;
+                    DROP TABLE schedules;
+                    ALTER TABLE schedules_new RENAME TO schedules;
+                    COMMIT;
+                    """
                 )
 
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
@@ -513,6 +549,10 @@ class Database:
 
     def delete_device(self, device_id: str) -> None:
         self.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+        # Cascade, or its schedules linger forever pointing at nothing —
+        # invisible in the UI and impossible to remove. Same trap that
+        # delete_camera fell into.
+        self.execute("DELETE FROM schedules WHERE device_id = ?", (device_id,))
 
     # ---- clips -----------------------------------------------------------
 
@@ -553,15 +593,26 @@ class Database:
             (camera_id,),
         )
 
+    def schedules_for_device(self, device_id: str) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM schedules WHERE device_id = ? ORDER BY start_min",
+            (device_id,),
+        )
+
     def add_schedule(
-        self, camera_id: str, action: str, days: int, start_min: int,
-        end_min: int, value: str = "on", enabled: int = 1,
+        self, camera_id: str | None = None, action: str = "record", days: int = 127,
+        start_min: int = 0, end_min: int = 0, value: str = "on", enabled: int = 1,
+        device_id: str | None = None,
     ) -> int:
+        """A schedule targets exactly one thing: a camera or a device."""
+        if bool(camera_id) == bool(device_id):
+            raise ValueError("a schedule needs exactly one of camera_id/device_id")
         cur = self.execute(
             "INSERT INTO schedules "
-            "(camera_id, action, days, start_min, end_min, value, enabled, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (camera_id, action, days, start_min, end_min, value, enabled,
+            "(camera_id, device_id, action, days, start_min, end_min, value, "
+            " enabled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (camera_id, device_id, action, days, start_min, end_min, value, enabled,
              int(time.time())),
         )
         return int(cur.lastrowid or 0)

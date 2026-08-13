@@ -71,6 +71,17 @@ function initDevices() {
     item.appendChild(button('Off', () => setState(device.id, 'off', status)));
     item.appendChild(button('Test', () => test(device.id, status)));
 
+    const sched = el('button', 'btn btn-sm', 'Schedule');
+    sched.type = 'button';
+    sched.addEventListener('click', () => {
+      const open = item.nextElementSibling
+        && item.nextElementSibling.dataset.schedFor === device.id;
+      if (open) { item.nextElementSibling.remove(); return; }
+      const panel = schedulePanel(device);
+      item.after(panel);
+    });
+    item.appendChild(sched);
+
     const remove = el('button', 'remove-x', '×');
     remove.title = 'Remove device';
     remove.addEventListener('click', async () => {
@@ -129,6 +140,144 @@ function initDevices() {
       status.classList.add('error-text');
       status.textContent = String(err.message || err);
     }
+  }
+
+  // --- schedules -----------------------------------------------------------
+  // "On during this window" — the same weekday-mask + start/end shape the
+  // camera schedules use, so a device behaves like a camera light.
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  function schedulePanel(device) {
+    const panel = el('div', 'list-item sched-panel');
+    panel.dataset.schedFor = device.id;
+    panel.style.cssText = 'flex-direction:column;align-items:stretch;gap:10px';
+
+    const rows = el('div', 'sched-list');
+    panel.appendChild(rows);
+
+    const form = el('form', 'sched-add');
+    const start = timeField(form, 'On at', '18:00');
+    const end = timeField(form, 'Off at', '23:00');
+
+    const dayWrap = el('div', 'setting sched-daypick');
+    dayWrap.appendChild(el('label', null, 'Days'));
+    const dayBtns = el('div', 'sched-daybtns');
+    const boxes = DAY_NAMES.map((day, i) => {
+      const label = el('label');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = true;
+      box.dataset.day = String(i);
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(day));
+      dayBtns.appendChild(label);
+      return box;
+    });
+    dayWrap.appendChild(dayBtns);
+    form.appendChild(dayWrap);
+
+    const add = el('button', 'btn btn-sm btn-primary', 'Add');
+    add.type = 'submit';
+    form.appendChild(add);
+    const err = el('span', 'small error-text');
+    form.appendChild(err);
+    panel.appendChild(form);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const days = boxes.reduce(
+        (mask, b) => mask | (b.checked ? (1 << Number(b.dataset.day)) : 0), 0);
+      try {
+        const r = await fetch(`/api/devices/${encodeURIComponent(device.id)}/schedules`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            days, start_min: toMinutes(start.value), end_min: toMinutes(end.value),
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'could not add');
+        loadSchedules(device, rows);
+      } catch (e2) {
+        err.textContent = String(e2.message || e2);
+      }
+    });
+
+    loadSchedules(device, rows);
+    return panel;
+  }
+
+  async function loadSchedules(device, rows) {
+    rows.replaceChildren(el('div', 'muted small', 'Loading…'));
+    let items = [];
+    try {
+      items = await (await fetch(`/api/devices/${encodeURIComponent(device.id)}/schedules`)).json();
+    } catch {
+      rows.replaceChildren(el('div', 'muted small', 'Could not load schedules.'));
+      return;
+    }
+    rows.replaceChildren();
+    if (!items.length) {
+      rows.appendChild(el('div', 'muted small',
+        'No schedule — this device only changes when you or a trigger says so.'));
+      return;
+    }
+    for (const s of items) rows.appendChild(scheduleRow(device, s, rows));
+  }
+
+  function scheduleRow(device, s, rows) {
+    const row = el('div', 'sched-row');
+    row.appendChild(el('span', 'sched-badge sched-light', 'On'));
+    row.appendChild(el('span', 'sched-when mono', `${fmt(s.start_min)}–${fmt(s.end_min)}`));
+
+    const days = el('span', 'sched-days');
+    DAY_NAMES.forEach((day, i) => {
+      days.appendChild(el('span', (s.days >> i) & 1 ? 'on' : 'off', day));
+    });
+    row.appendChild(days);
+
+    const toggle = el('label', 'checkbox sched-enabled');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = s.enabled;
+    box.addEventListener('change', () => {
+      fetch(`/api/devices/${encodeURIComponent(device.id)}/schedules/${s.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: box.checked }),
+      }).catch(() => { box.checked = !box.checked; });
+    });
+    toggle.appendChild(box);
+    toggle.appendChild(el('span', null, 'On'));
+    row.appendChild(toggle);
+
+    const del = el('button', 'remove-x', '×');
+    del.title = 'Remove schedule';
+    del.addEventListener('click', async () => {
+      await fetch(`/api/devices/${encodeURIComponent(device.id)}/schedules/${s.id}`,
+                  { method: 'DELETE' });
+      loadSchedules(device, rows);
+    });
+    row.appendChild(del);
+    return row;
+  }
+
+  const fmt = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':'
+                   + String(m % 60).padStart(2, '0');
+  const toMinutes = (value) => {
+    const [h, m] = String(value || '0:0').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+
+  function timeField(form, label, value) {
+    const wrap = el('div', 'setting');
+    wrap.appendChild(el('label', null, label));
+    const input = el('input');
+    input.type = 'time';
+    input.value = value;
+    input.required = true;
+    wrap.appendChild(input);
+    form.appendChild(wrap);
+    return input;
   }
 
   // --- add form ------------------------------------------------------------

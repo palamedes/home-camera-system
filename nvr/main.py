@@ -1101,6 +1101,7 @@ def _schedule_dict(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
         "camera_id": row["camera_id"],
+        "device_id": row["device_id"],
         "action": row["action"],
         "days": row["days"],
         "start_min": row["start_min"],
@@ -1131,21 +1132,10 @@ async def api_create_schedule(camera_id: str, request: Request):
     if action not in SCHEDULE_ACTIONS:
         return JSONResponse({"error": "invalid action"}, status_code=400)
 
-    try:
-        days = int(payload.get("days"))
-        start_min = int(payload.get("start_min"))
-        end_min = int(payload.get("end_min"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "days and times must be integers"}, status_code=400)
-
-    if not (0 <= days <= 127):
-        return JSONResponse({"error": "days must be a 0..127 bitmask"}, status_code=400)
-    if days == 0:
-        return JSONResponse({"error": "select at least one day"}, status_code=400)
-    if not (0 <= start_min <= 1439 and 0 <= end_min <= 1439):
-        return JSONResponse({"error": "times must be within 0..1439"}, status_code=400)
-    if start_min == end_min:
-        return JSONResponse({"error": "start and end must differ"}, status_code=400)
+    window, error = _parse_window(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    days, start_min, end_min = window
 
     if action == "nightvision":
         value = payload.get("value") or "auto"
@@ -1161,6 +1151,85 @@ async def api_create_schedule(camera_id: str, request: Request):
     return JSONResponse(_schedule_dict(db.one(
         "SELECT * FROM schedules WHERE id = ?", (sid,)
     )))
+
+
+def _parse_window(payload: dict[str, Any]) -> tuple[tuple[int, int, int] | None, str | None]:
+    """Validate the days/start/end shared by every schedule kind.
+
+    Returns ((days, start_min, end_min), None) or (None, error message).
+    """
+    try:
+        days = int(payload.get("days"))
+        start_min = int(payload.get("start_min"))
+        end_min = int(payload.get("end_min"))
+    except (TypeError, ValueError):
+        return None, "days and times must be integers"
+    if not (0 <= days <= 127):
+        return None, "days must be a 0..127 bitmask"
+    if days == 0:
+        return None, "select at least one day"
+    if not (0 <= start_min <= 1439 and 0 <= end_min <= 1439):
+        return None, "times must be within 0..1439"
+    if start_min == end_min:
+        return None, "start and end must differ"
+    return (days, start_min, end_min), None
+
+
+# --- device schedules (admin-gated by the /api/devices prefix) --------------
+
+@app.get("/api/devices/{device_id}/schedules")
+def api_list_device_schedules(device_id: str):
+    if not db.device(device_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(
+        [_schedule_dict(s) for s in db.schedules_for_device(device_id)]
+    )
+
+
+@app.post("/api/devices/{device_id}/schedules")
+async def api_create_device_schedule(device_id: str, request: Request):
+    """A device schedule is one shape: on for this window, off outside it."""
+    if not db.device(device_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    window, error = _parse_window(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    days, start_min, end_min = window
+    sid = db.add_schedule(
+        device_id=device_id, action="power", days=days,
+        start_min=start_min, end_min=end_min, value="on",
+    )
+    return JSONResponse(_schedule_dict(db.one(
+        "SELECT * FROM schedules WHERE id = ?", (sid,)
+    )))
+
+
+@app.patch("/api/devices/{device_id}/schedules/{sid}")
+async def api_update_device_schedule(device_id: str, sid: int, request: Request):
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["device_id"] != device_id:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    if "enabled" not in payload:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.set_schedule_enabled(sid, bool(payload["enabled"]))
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/devices/{device_id}/schedules/{sid}")
+def api_delete_device_schedule(device_id: str, sid: int):
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["device_id"] != device_id:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_schedule(sid)
+    return JSONResponse({"ok": True})
 
 
 @app.patch("/api/cameras/{camera_id}/schedules/{sid}")
