@@ -167,3 +167,53 @@ def test_archived_camera_keeps_long_retention_override(app_module, db):
     RetentionService(cfg, db).run_once()
 
     assert old.exists()
+
+
+# --- event markers must not outlive the footage they annotate ---------------
+# Age alone cannot decide this: the size quota and free-space backstop prune
+# footage long before max_age_days, which left tick marks on the history
+# timeline pointing at footage that was already gone.
+
+def test_event_markers_are_pruned_with_their_footage(app_module, db):
+    cfg = app_module.cfg
+    add_camera(db, "cam1")
+    now = time.time()
+    # Footage only goes back 2 days...
+    recent = _segment_file(cfg, "cam1/recent.mp4")
+    db.add_segment("cam1", str(recent), now - 2 * 86400, 60.0, 100, "h264")
+    # ...but markers exist from 3 days ago (their footage was already pruned by
+    # the size quota) and from within the retained window.
+    db.add_event("cam1", now - 3 * 86400, "person")
+    db.add_event("cam1", now - 86400, "person")
+
+    RetentionService(cfg, db).run_once()
+
+    kept = [e["ts"] for e in db.events_in_range("cam1", 0, 1e12)]
+    assert len(kept) == 1
+    assert kept[0] > now - 2 * 86400
+
+
+def test_markers_inside_the_footage_window_survive(app_module, db):
+    cfg = app_module.cfg
+    add_camera(db, "cam1")
+    now = time.time()
+    seg = _segment_file(cfg, "cam1/a.mp4")
+    db.add_segment("cam1", str(seg), now - 3600, 60.0, 100, "h264")
+    db.add_event("cam1", now - 1800, "vehicle")
+
+    RetentionService(cfg, db).run_once()
+
+    assert len(db.events_in_range("cam1", 0, 1e12)) == 1
+
+
+def test_a_camera_with_no_footage_keeps_its_detection_log(app_module, db):
+    """Recording switched off: those events are a log, not a broken promise, so
+    they must not be mass-deleted."""
+    cfg = app_module.cfg
+    add_camera(db, "cam1", record=0)
+    now = time.time()
+    db.add_event("cam1", now - 3 * 86400, "person")
+
+    RetentionService(cfg, db).run_once()
+
+    assert len(db.events_in_range("cam1", 0, 1e12)) == 1

@@ -569,10 +569,25 @@ function initHistory({ cameraId, bounds, vcamId = null }) {
   // Keep the window edge tracking newly recorded footage while idle. Runs often
   // so freshly-indexed footage shows up promptly — the timeline already trails
   // live by however long a segment takes to close, and a slow refresh stacked
-  // on top of that. The window edge only advances when nothing is playing, so
-  // this never yanks the view out from under a rewind.
+  // on top of that.
+  //
+  // Only chase the live edge when the view is ALREADY sitting at it. Deriving
+  // that from the window itself (rather than a "following" flag) means there is
+  // no state to get stuck: pan or zoom into the past and the view stays put;
+  // pan back to the right-hand edge and it resumes following on its own.
+  // Without this, panning back to last Tuesday was silently undone a few
+  // seconds later, which read as the timeline fighting you.
+  function atLiveEdge() {
+    // Tolerance covers the indexing sawtooth (footage trails live by up to a
+    // segment length), with a floor so the tightest zoom still counts as live.
+    const slack = Math.max(120, windowSpan * 0.05);
+    return windowEnd >= Date.now() / 1000 - slack;
+  }
+
   setInterval(() => {
-    if (chunkStart === null) windowEnd = Math.max(windowEnd, Date.now() / 1000);
+    if (chunkStart === null && atLiveEdge()) {
+      windowEnd = Math.max(windowEnd, Date.now() / 1000);
+    }
     loadCoverage();
   }, 10000);
 

@@ -128,12 +128,40 @@ class RetentionService:
                 d, f = self._prune_older_than(orphan_id, now - global_hard)
                 deleted += d
                 freed += f
-            # Event markers are tiny, but there's no reason to keep them past
-            # the footage they annotate.
+            # Events belonging to a camera row that no longer exists have no
+            # footage to align to; the global cap is the only sensible bound.
             try:
-                self.db.prune_events_older_than(now - global_hard)
+                live = set(self.db.event_camera_ids()) & {
+                    c["id"] for c in self.db.cameras(include_archived=True)
+                }
+                for cam_id in set(self.db.event_camera_ids()) - live:
+                    self.db.prune_events_for_camera_older_than(
+                        cam_id, now - global_hard
+                    )
             except Exception:
-                log.debug("event prune skipped", exc_info=True)
+                log.debug("orphan event prune skipped", exc_info=True)
+
+        # A tick mark you cannot click through to is worse than no tick mark, so
+        # markers must not outlive the footage they annotate. Age alone can't
+        # decide that: footage is also pruned by the size quota and the
+        # free-space backstop, which routinely bite long before max_age_days —
+        # so events were surviving hours past the oldest surviving segment.
+        # Align each camera's events to its own oldest remaining segment
+        # instead. A camera with no footage at all (recording switched off) is
+        # left alone: those events are a detection log, not a broken promise.
+        try:
+            for cam_id in self.db.event_camera_ids():
+                bounds = self.db.segment_bounds(cam_id)
+                if not bounds:
+                    continue
+                removed = self.db.prune_events_for_camera_older_than(cam_id, bounds[0])
+                if removed:
+                    log.info(
+                        "pruned %d event markers for %s with no footage left",
+                        removed, cam_id,
+                    )
+        except Exception:
+            log.debug("event prune skipped", exc_info=True)
 
         # 3. Size quota — oldest-first, a backstop for when even the rolling
         #    windows add up to more than the disk budget.

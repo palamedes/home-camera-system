@@ -886,6 +886,18 @@ class Database:
         cur = self.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
         return int(cur.rowcount or 0)
 
+    def prune_events_for_camera_older_than(self, camera_id: str, cutoff: float) -> int:
+        cur = self.execute(
+            "DELETE FROM events WHERE camera_id = ? AND ts < ?", (camera_id, cutoff)
+        )
+        return int(cur.rowcount or 0)
+
+    def event_camera_ids(self) -> list[str]:
+        return [
+            r["camera_id"]
+            for r in self.query("SELECT DISTINCT camera_id FROM events")
+        ]
+
     # ---- app settings ----------------------------------------------------
 
     def get_setting(self, key: str) -> str | None:
