@@ -30,6 +30,7 @@
        nav stays one row per top-level area rather than per page. #}
     <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') or path.startswith('/clips') }}">Cameras</a>
     <a href="/blinds" class="{{ 'active' if path.startswith('/blinds') }}">Blinds</a>
+    <a href="/tasks" class="{{ 'active' if path.startswith('/tasks') }}">Tasks</a>
     <a href="/calendar" class="{{ 'active' if path.startswith('/calendar') }}">Calendar</a>
     {% if is_admin %}
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') or path.startswith('/discover') }}">Settings</a>

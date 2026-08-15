@@ -515,6 +515,7 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
             "calib": calib,
             "viewer_visible": bool(v["viewer_visible"]),
             "show_on_grid": bool(v["show_on_grid"]),
+            "show_on_dashboard": bool(v["show_on_dashboard"]),
             "sort_order": v["sort_order"],
             "mode": v["mode"],
             # For crop virtuals the calib JSON is the normalised {x,y,w,h} rect.
@@ -524,17 +525,27 @@ def virtual_view_models(request: Request) -> list[dict[str, Any]]:
     return result
 
 
-def grid_items(request: Request, *, only_grid: bool = False) -> list[dict[str, Any]]:
+def grid_items(request: Request, *, only_grid: bool = False,
+               only_dashboard: bool = False) -> list[dict[str, Any]]:
     """Cameras and virtual cameras merged into one list in the shared sort_order,
     so the dashboard, Cameras page and wall all show the same interleaved
-    arrangement. Each item is tagged kind='camera'|'virtual'."""
+    arrangement. Each item is tagged kind='camera'|'virtual'.
+
+    Two independent visibility flags: show_on_grid covers the Cameras page and
+    the wall, show_on_dashboard covers the front page.
+    """
+    def hidden(item: Any) -> bool:
+        if only_grid and not item["show_on_grid"]:
+            return True
+        return bool(only_dashboard and not item["show_on_dashboard"])
+
     items: list[dict[str, Any]] = []
     for c in camera_view_models(request):
-        if only_grid and not c["show_on_grid"]:
+        if hidden(c):
             continue
         items.append({"kind": "camera", "order": c.get("sort_order") or 0, "cam": c})
     for v in virtual_view_models(request):
-        if only_grid and not v["show_on_grid"]:
+        if hidden(v):
             continue
         items.append({"kind": "virtual", "order": v.get("sort_order") or 0, "vcam": v})
     # Stable tie-break: cameras before virtuals when orders collide.
@@ -545,13 +556,14 @@ def grid_items(request: Request, *, only_grid: bool = False) -> list[dict[str, A
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     cameras = camera_view_models(request)
-    grid = [c for c in cameras if c["show_on_grid"]]
+    grid = [c for c in cameras if c["show_on_dashboard"]]
     return render(
         request, "dashboard.html",
         cameras=cameras,   # all viewable, for the System recording controls
-        grid=grid,         # only those shown as tiles
-        items=grid_items(request, only_grid=True),  # cameras+virtuals, interleaved
-        virtuals=[v for v in virtual_view_models(request) if v["show_on_grid"]],
+        grid=grid,         # only those shown as tiles here
+        items=grid_items(request, only_dashboard=True),
+        virtuals=[v for v in virtual_view_models(request)
+                  if v["show_on_dashboard"]],
         total=len(cameras),
         online=sum(1 for c in cameras if c["online"]),
         recording_count=sum(1 for c in cameras if c["record"]),
@@ -855,11 +867,13 @@ async def api_update_camera(camera_id: str, request: Request):
     allowed = {"name", "record", "record_stream", "enabled", "main_url", "sub_url",
                "username", "password", "record_until", "retention_seconds",
                "rolling_keep_seconds", "fisheye", "viewer_visible", "show_on_grid",
+               "show_on_dashboard",
                "preferred_volume"}
     fields = {k: v for k, v in payload.items() if k in allowed}
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
-    for flag in ("record", "enabled", "fisheye", "viewer_visible", "show_on_grid"):
+    for flag in ("record", "enabled", "fisheye", "viewer_visible", "show_on_grid",
+                 "show_on_dashboard"):
         if flag in fields:
             fields[flag] = 1 if fields[flag] else 0
     # Empty string (the "Default (pool)" option) clears the pin back to NULL.
@@ -1327,6 +1341,8 @@ async def api_update_virtual(vid: int, request: Request):
         fields["viewer_visible"] = 1 if payload["viewer_visible"] else 0
     if "show_on_grid" in payload:
         fields["show_on_grid"] = 1 if payload["show_on_grid"] else 0
+    if "show_on_dashboard" in payload:
+        fields["show_on_dashboard"] = 1 if payload["show_on_dashboard"] else 0
     if not fields:
         return JSONResponse({"error": "nothing to update"}, status_code=400)
     assigns = ", ".join(f"{k} = ?" for k in fields)
@@ -1451,6 +1467,9 @@ def _calendar_dict(row: Any, user_id: int | None) -> dict[str, Any]:
 def _calendar_event_dict(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
+        # Distinguishes a real event from a task's due date, which rides along
+        # in the same feed but is read-only there.
+        "kind": "event",
         "calendar_id": row["calendar_id"],
         "title": row["title"],
         "description": row["description"],
@@ -1559,7 +1578,34 @@ def api_calendar_events(request: Request, start: float, end: float):
     user = auth.current_user(request)
     visible = [c["id"] for c in _visible_calendars(user) if c["enabled"]]
     rows = db.calendar_events(start, end, calendar_ids=visible)
-    return JSONResponse([_calendar_event_dict(r) for r in rows])
+    events = [_calendar_event_dict(r) for r in rows]
+    # Tasks with a due date show up alongside real events. They are synthesised
+    # per request rather than mirrored into calendar_events, so there is one
+    # copy of the truth and ticking a task off cannot leave a ghost behind.
+    events.extend(_due_task_events(start, end))
+    return JSONResponse(events)
+
+
+def _due_task_events(start: float, end: float) -> list[dict[str, Any]]:
+    names = _user_names()
+    out = []
+    for task in db.tasks_due_between(start, end):
+        who = names.get(task["assignee_id"])
+        out.append({
+            # Namespaced so the calendar never mistakes one for an event it
+            # can edit or delete — these are read-only over there.
+            "id": f"task-{task['id']}",
+            "calendar_id": None,
+            "kind": "task",
+            "task_id": task["id"],
+            "title": f"{task['title']}" + (f" — {who}" if who else ""),
+            "description": task["notes"],
+            "location": None,
+            "start": task["due_utc"],
+            "end": task["due_utc"] + 3600,
+            "all_day": True,
+        })
+    return out
 
 
 def _event_payload(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
@@ -1821,6 +1867,272 @@ async def api_hook_device(device_id: str, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Tasks — a shared household to-do list.
+#
+# Lists are the *thing* the work belongs to (the house, the boat, the car),
+# not a workflow stage: for a household, "which thing is this about" sorts the
+# work usefully, whereas To-do/Doing/Done mostly creates a column nobody moves
+# cards out of.
+#
+# Everyone signed in can see and edit everything, like the shared calendar. A
+# family to-do list where you cannot tick off a job somebody else wrote down,
+# or add one for them, is not a household feature.
+# ---------------------------------------------------------------------------
+
+DEFAULT_TASK_LISTS = (("House", "#2563eb"), ("Boat", "#0891b2"), ("Car", "#7c3aed"))
+
+
+def _ensure_task_lists() -> None:
+    """Seed the obvious categories on first use, so the board is never empty."""
+    if db.task_lists():
+        return
+    for index, (name, color) in enumerate(DEFAULT_TASK_LISTS):
+        db.add_task_list(name, color=color, sort_order=index)
+
+
+def _task_dict(row: Any, names: dict[int, str]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "list_id": row["list_id"],
+        "title": row["title"],
+        "notes": row["notes"],
+        "assignee_id": row["assignee_id"],
+        "assignee": names.get(row["assignee_id"]),
+        "due": row["due_utc"],
+        "done": bool(row["done"]),
+        "done_utc": row["done_utc"],
+        "sort_order": row["sort_order"],
+    }
+
+
+def _task_list_dict(row: Any) -> dict[str, Any]:
+    return {"id": row["id"], "name": row["name"], "color": row["color"],
+            "sort_order": row["sort_order"]}
+
+
+def _user_names() -> dict[int, str]:
+    return {u["id"]: u["username"] for u in db.users()}
+
+
+@app.get("/tasks", response_class=HTMLResponse)
+def tasks_page(request: Request):
+    _ensure_task_lists()
+    return render(request, "tasks.html")
+
+
+@app.get("/api/tasks")
+def api_tasks(request: Request):
+    _ensure_task_lists()
+    names = _user_names()
+    me = auth.current_user(request)
+    return JSONResponse({
+        "lists": [_task_list_dict(l) for l in db.task_lists()],
+        "tasks": [_task_dict(t, names) for t in db.tasks()],
+        "users": [{"id": u["id"], "username": u["username"]} for u in db.users()],
+        "me": me["id"] if me else None,
+        "can_edit_lists": auth.is_admin(me),
+    })
+
+
+def _parse_due(value: Any) -> tuple[float | None, str | None]:
+    """A due date is optional, and clearing it must be expressible."""
+    if value in (None, ""):
+        return None, None
+    try:
+        due = float(value)
+    except (TypeError, ValueError):
+        return None, "due must be a timestamp"
+    if not math.isfinite(due):
+        return None, "due must be a real time"
+    return due, None
+
+
+@app.post("/api/tasks")
+async def api_add_task(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    title = (payload.get("title") or "").strip()
+    if not title:
+        return JSONResponse({"error": "A title is required."}, status_code=400)
+
+    fields: dict[str, Any] = {"title": title}
+    list_id = payload.get("list_id")
+    if list_id not in (None, "", 0):
+        try:
+            list_id = int(list_id)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "list_id must be a number"}, status_code=400)
+        if not db.task_list(list_id):
+            return JSONResponse({"error": "unknown list"}, status_code=404)
+        fields["list_id"] = list_id
+
+    assignee = payload.get("assignee_id")
+    if assignee not in (None, "", 0):
+        try:
+            assignee = int(assignee)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "assignee_id must be a number"},
+                                status_code=400)
+        if not db.user_by_id(assignee):
+            return JSONResponse({"error": "unknown user"}, status_code=404)
+        fields["assignee_id"] = assignee
+
+    due, error = _parse_due(payload.get("due"))
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    if due is not None:
+        fields["due_utc"] = due
+
+    notes = (payload.get("notes") or "").strip()
+    if notes:
+        fields["notes"] = notes
+
+    me = auth.current_user(request)
+    if me:
+        fields["created_by"] = me["id"]
+
+    task_id = db.add_task(**fields)
+    return JSONResponse(_task_dict(db.task(task_id), _user_names()))
+
+
+@app.patch("/api/tasks/{task_id}")
+async def api_update_task(task_id: int, request: Request):
+    if not db.task(task_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+
+    fields: dict[str, Any] = {}
+    if "title" in payload:
+        title = (payload.get("title") or "").strip()
+        if not title:
+            return JSONResponse({"error": "A title is required."}, status_code=400)
+        fields["title"] = title
+    if "notes" in payload:
+        fields["notes"] = (payload.get("notes") or "").strip() or None
+    if "list_id" in payload:
+        list_id = payload["list_id"]
+        if list_id in (None, "", 0):
+            fields["list_id"] = None
+        else:
+            try:
+                list_id = int(list_id)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "list_id must be a number"},
+                                    status_code=400)
+            if not db.task_list(list_id):
+                return JSONResponse({"error": "unknown list"}, status_code=404)
+            fields["list_id"] = list_id
+    if "assignee_id" in payload:
+        assignee = payload["assignee_id"]
+        if assignee in (None, "", 0):
+            fields["assignee_id"] = None
+        else:
+            try:
+                assignee = int(assignee)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "assignee_id must be a number"},
+                                    status_code=400)
+            if not db.user_by_id(assignee):
+                return JSONResponse({"error": "unknown user"}, status_code=404)
+            fields["assignee_id"] = assignee
+    if "due" in payload:
+        due, error = _parse_due(payload["due"])
+        if error:
+            return JSONResponse({"error": error}, status_code=400)
+        fields["due_utc"] = due
+    if "done" in payload:
+        done = bool(payload["done"])
+        fields["done"] = 1 if done else 0
+        fields["done_utc"] = time.time() if done else None
+
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_task(task_id, **fields)
+    return JSONResponse(_task_dict(db.task(task_id), _user_names()))
+
+
+@app.delete("/api/tasks/{task_id}")
+def api_delete_task(task_id: int, request: Request):
+    if not db.task(task_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_task(task_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/tasks/order")
+async def api_task_order(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    order = payload.get("order")
+    if not isinstance(order, list):
+        return JSONResponse({"error": "order must be a list"}, status_code=400)
+    try:
+        db.set_task_order([int(t) for t in order])
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "order must be task ids"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+# --- task lists (admin manages the categories) -----------------------------
+
+@app.post("/api/tasks/lists")
+async def api_add_task_list(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "A name is required."}, status_code=400)
+    color = (payload.get("color") or "").strip() or "#2563eb"
+    list_id = db.add_task_list(name, color=color)
+    return JSONResponse(_task_list_dict(db.task_list(list_id)))
+
+
+@app.patch("/api/tasks/lists/{list_id}")
+async def api_update_task_list(list_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.task_list(list_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields: dict[str, Any] = {}
+    if "name" in payload:
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return JSONResponse({"error": "A name is required."}, status_code=400)
+        fields["name"] = name
+    if "color" in payload:
+        fields["color"] = (payload.get("color") or "").strip() or "#2563eb"
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_task_list(list_id, **fields)
+    return JSONResponse(_task_list_dict(db.task_list(list_id)))
+
+
+@app.delete("/api/tasks/lists/{list_id}")
+def api_delete_task_list(list_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.task_list(list_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_task_list(list_id)
+    return JSONResponse({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # Blinds — rooms and motorised window coverings on a Connector/Motionblinds hub.
 #
 # Viewers may look and may operate; only admins may add hardware, rename things
@@ -1900,6 +2212,7 @@ def api_blinds(request: Request):
         "hubs": [_hub_dict(h) for h in db.shade_hubs()],
         "layers": [{"value": v, "label": LAYER_LABELS[v]} for v in LAYERS],
         "kinds": list(COVERING_KINDS),
+        "schedules": [_covering_schedule_dict(s) for s in db.covering_schedules()],
         "can_edit": _is_admin(request),
     })
 
@@ -2364,18 +2677,51 @@ def api_covering_schedules(request: Request):
     return JSONResponse([_covering_schedule_dict(s) for s in db.covering_schedules()])
 
 
+# A covering rule fires once, when its window opens, so the window is a
+# catch-up grace period rather than a duration. Ten minutes wide: a restart
+# just after the moment still applies the rule, but a shade never moves an
+# hour late because the box was off.
+COVER_GRACE_MIN = 10
+
+
 def _covering_schedule_dict(row: Any) -> dict[str, Any]:
+    try:
+        position = int(row["value"])
+    except (TypeError, ValueError):
+        position = None
     return {
         "id": row["id"],
         "covering_id": row["covering_id"],
         "room_id": row["covering_room_id"],
         "layer": row["covering_layer"],
         "days": row["days"],
-        "start_min": row["start_min"],
-        "end_min": row["end_min"],
-        "value": row["value"],
+        # Minutes past midnight. `at` is the contract; start/end are how the
+        # shared scheduler stores it.
+        "at": row["start_min"],
+        "position": position,
         "enabled": bool(row["enabled"]),
     }
+
+
+def _parse_cover_rule(payload: dict[str, Any]) -> tuple[tuple[int, int, int] | None, str | None]:
+    """Read a covering rule's day mask and time-of-day.
+
+    Unlike a recording window there is no end: the rule is a moment, not a
+    span. Asking for an end time would be asking the user to invent a number
+    that changes nothing.
+    """
+    try:
+        days = int(payload.get("days"))
+        at = int(payload.get("at"))
+    except (TypeError, ValueError):
+        return None, "days and time must be numbers"
+    if not (0 <= days <= 127):
+        return None, "days must be a 0..127 bitmask"
+    if days == 0:
+        return None, "select at least one day"
+    if not 0 <= at <= 1439:
+        return None, "time must be within 0..1439 minutes past midnight"
+    return (days, at, (at + COVER_GRACE_MIN) % 1440), None
 
 
 @app.post("/api/blinds/schedules")
@@ -2393,7 +2739,7 @@ async def api_add_covering_schedule(request: Request):
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
-    window, error = _parse_window(payload)
+    window, error = _parse_cover_rule(payload)
     if error:
         return JSONResponse({"error": error}, status_code=400)
     days, start_min, end_min = window

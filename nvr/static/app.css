@@ -228,8 +228,10 @@ a { color: inherit; text-decoration: none; }
 .switch input:disabled + .track { opacity: .5; }
 .switch input:focus-visible + .track { box-shadow: 0 0 0 3px rgb(59 130 246 / .3); }
 
-.wrap { max-width: 1240px; margin: 0 auto; padding: 26px 22px 60px; }
-.wrap-wide { max-width: 1600px; margin: 0 auto; padding: 20px 22px 50px; }
+/* Use the window. A fixed cap wasted most of a wide monitor and forced the
+   task columns to stack when they had room to sit side by side. */
+.wrap { max-width: none; margin: 0 auto; padding: 26px 26px 60px; }
+.wrap-wide { max-width: none; margin: 0 auto; padding: 20px 26px 50px; }
 
 .page-head {
   display: flex;
@@ -311,6 +313,8 @@ a { color: inherit; text-decoration: none; }
   background: var(--panel); border: none; text-align: left; cursor: pointer;
   min-height: 96px; padding: 6px 8px; display: flex; flex-direction: column;
   gap: 4px; color: var(--text); font: inherit;
+  min-width: 0;   /* grid items default to min-content; without this they grow */
+  overflow: hidden;
 }
 .cal-day:hover { background: var(--panel-2); }
 .cal-day.other-month { color: var(--muted); background: var(--bg); }
@@ -321,9 +325,19 @@ a { color: inherit; text-decoration: none; }
 }
 .cal-day.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cal-daynum { font-size: 12.5px; font-weight: 600; }
-.cal-day-list { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
-.cal-event { display: flex; align-items: center; gap: 5px; font-size: 11.5px; }
-.cal-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-day-list { display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+                min-width: 0; }
+/* min-width:0 on both, or the title's intrinsic width wins over the ellipsis
+   and a long task name blows the whole day column out of the grid. */
+.cal-event { display: flex; align-items: center; gap: 5px; font-size: 11.5px;
+             min-width: 0; }
+.cal-event-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cal-more { font-size: 11px; color: var(--muted); }
 
 .cal-side .cal-day-events { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
@@ -331,7 +345,16 @@ a { color: inherit; text-decoration: none; }
   border-left: 3px solid var(--accent); background: var(--panel-2);
   border-radius: 6px; padding: 10px 12px;
 }
-.cal-card-head { display: flex; justify-content: space-between; gap: 8px; }
+.cal-card-head {
+  display: flex; justify-content: space-between; gap: 8px;
+  align-items: flex-start; min-width: 0;
+}
+/* A pasted URL has no spaces to break at, so it needs an explicit licence to
+   break anywhere rather than running out of the card. */
+.cal-card, .cal-card-head strong, .cal-desc {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .cal-desc { color: var(--muted); margin-top: 4px; white-space: pre-wrap; }
 
 /* Devices list: a failed relay call reports the device's own message. */
@@ -441,7 +464,8 @@ a { color: inherit; text-decoration: none; }
 
 label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
 
-input[type=text], input[type=password], select {
+input[type=text], input[type=password], input[type=date],
+input[type=time], input[type=number], input[type=email], textarea, select {
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
@@ -557,7 +581,7 @@ a.title:hover { color: var(--accent); }
 .remove-x {
   align-self: stretch;
   margin: -14px -16px -14px 8px;
-  padding: 0 18px;
+  padding: 0 9px;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; border-left: 1px solid var(--line);
   color: var(--bad); font-size: 18px; line-height: 1; cursor: pointer;
@@ -1292,3 +1316,111 @@ a.title:hover { color: var(--accent); }
   flex: none;
   margin-top: 0;
 }
+
+/* Schedules */
+.dot-off { background: var(--muted); box-shadow: none; }
+.blinds-day-presets { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.blinds-day {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.blinds-day input { margin: 0; }
+.blinds-day-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.modal-body .blinds-day-quick .btn { width: auto; flex: 1; margin-top: 0; }
+
+/* ---- tasks ---- */
+
+.task-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.task-col { overflow: hidden; }
+.task-col-head { border-top: 3px solid var(--line); border-bottom: 1px solid var(--line); }
+.task-col-head h2 { margin: 0; font-size: 15px; }
+.task-col-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.task-empty { padding: 6px 4px; }
+
+.task-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-2);
+}
+.task-card-top { display: flex; align-items: flex-start; gap: 9px; }
+.task-card-top input[type="checkbox"] { margin-top: 2px; flex: none; }
+.task-title { font-size: 14px; font-weight: 500; }
+.task-notes { margin-top: 4px; white-space: pre-wrap; }
+.task-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; align-items: center; }
+
+.task-card.is-done .task-title { text-decoration: line-through; color: var(--muted); }
+.task-card.is-done { opacity: .65; }
+
+.task-due { font-size: 11.5px; color: var(--muted); }
+.task-due-today { color: #fcd34d; font-weight: 600; }
+.task-due-soon { color: #93c5fd; }
+.task-due-overdue { color: #fca5a5; font-weight: 600; }
+
+/* The edit pencil only appears on hover, like the other icon buttons — but it
+   must stay reachable by keyboard, so focus reveals it too. */
+.task-card .task-edit { flex: none; }
+.task-card:hover .task-edit,
+.task-card .task-edit:focus-visible { opacity: 1; }
+
+/* A task's due date on the calendar: a deadline, not an appointment. */
+.cal-dot-task {
+  background: transparent;
+  border: 2px solid var(--muted);
+  box-sizing: border-box;
+}
+.cal-card-task { border-left-color: var(--muted) !important; border-left-style: dashed; }
+
+/* ---- wide modal, for forms with a notes field ---- */
+
+.modal-wide { max-width: min(820px, 94vw); }
+/* The notes box should use the room the wide modal buys, not sit at the
+   browser's default textarea size. */
+.modal-body textarea { width: 100%; resize: vertical; min-height: 96px; }
+/* Two fields side by side once there is room for it. */
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+@media (max-width: 620px) { .modal-grid { grid-template-columns: 1fr; } }
+
+/* ---- task overflow ---- */
+
+/* Flex children default to min-width:auto, so a long title or a pasted URL
+   would push the card wider than its column instead of wrapping. */
+.task-card-top > .grow { min-width: 0; }
+.task-title, .task-notes, .task-meta { overflow-wrap: anywhere; min-width: 0; }
+.task-col, .task-col-body { min-width: 0; }
+
+/* The whole card opens the task, so it needs to look and behave like a
+   control — including from the keyboard. */
+.task-card-open { cursor: pointer; }
+.task-card-open:hover { border-color: var(--accent); }
+.task-card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- task detail ---- */
+
+.task-detail-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+}
+.task-detail-row { display: flex; gap: 10px; margin-bottom: 8px; font-size: 13.5px; }
+.task-detail-row .k { color: var(--muted); min-width: 90px; flex: none; }
+.task-detail-row .v { min-width: 0; overflow-wrap: anywhere; }

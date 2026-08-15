@@ -510,7 +510,11 @@
             </div>
             <div class="checkbox">
               <input type="checkbox" id="grid-{{ camera.id }}" data-toggle="show_on_grid" {{ 'checked' if camera.show_on_grid }}>
-              <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the dashboard and Cameras page" data-help="cameras.show_on_grid">On grid</label>
+              <label for="grid-{{ camera.id }}" title="Show the raw camera tile on the Cameras page and wall view" data-help="cameras.show_on_grid">On grid</label>
+            </div>
+            <div class="checkbox">
+              <input type="checkbox" id="dash-{{ camera.id }}" data-toggle="show_on_dashboard" {{ 'checked' if camera.show_on_dashboard }}>
+              <label for="dash-{{ camera.id }}" title="Show the raw camera tile on the front dashboard" data-help="cameras.show_on_dashboard">On dashboard</label>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="vis-{{ camera.id }}" data-toggle="viewer_visible" {{ 'checked' if camera.viewer_visible }}>
@@ -611,7 +615,12 @@
       <div class="checkbox">
         <input type="checkbox" id="vgrid-{{ v.id }}" data-vcam-grid="{{ v.id }}"
                {{ 'checked' if v.show_on_grid }}>
-        <label for="vgrid-{{ v.id }}" title="Show this virtual camera's tile on the dashboard and Cameras page">On grid</label>
+        <label for="vgrid-{{ v.id }}" title="Show this virtual camera's tile on the Cameras page and wall view">On grid</label>
+      </div>
+      <div class="checkbox">
+        <input type="checkbox" id="vdash-{{ v.id }}" data-vcam-dash="{{ v.id }}"
+               {{ 'checked' if v.show_on_dashboard }}>
+        <label for="vdash-{{ v.id }}" title="Show this virtual camera's tile on the front dashboard">On dashboard</label>
       </div>
       <div class="checkbox">
         <input type="checkbox" id="vvis-{{ v.id }}" data-vcam-vis="{{ v.id }}"
@@ -1036,7 +1045,8 @@ document.querySelectorAll('[data-relink-apply]').forEach(btn => {
 
 // Virtual-camera booleans: data-vcam-vis (viewer_visible) and data-vcam-grid
 // (show_on_grid). Both PUT the matching field and revert the box on failure.
-[['data-vcam-vis', 'viewer_visible'], ['data-vcam-grid', 'show_on_grid']].forEach(([attr, field]) => {
+[['data-vcam-vis', 'viewer_visible'], ['data-vcam-grid', 'show_on_grid'],
+  ['data-vcam-dash', 'show_on_dashboard']].forEach(([attr, field]) => {
   document.querySelectorAll(`[${attr}]`).forEach(box => {
     box.addEventListener('change', async () => {
       box.disabled = true;

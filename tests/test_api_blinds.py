@@ -418,7 +418,7 @@ def test_a_viewer_may_move_a_group(viewer_client, db, hub, room, moves):
 def test_scheduling_a_group(admin_client, db, hub, room):
     r = admin_client.post("/api/blinds/schedules", json={
         "room_id": room, "layer": "blackout", "position": 100,
-        "days": 127, "start_min": 1260, "end_min": 1320,
+        "days": 127, "at": 1260,
     })
     assert r.status_code == 200
     assert r.json()["layer"] == "blackout"
@@ -431,7 +431,7 @@ def test_scheduling_one_covering_clears_the_group_selector(
     _covering(db, "c1", room_id=room)
     admin_client.post("/api/blinds/schedules", json={
         "covering_id": "c1", "room_id": room, "layer": "sheer", "position": 0,
-        "days": 127, "start_min": 420, "end_min": 480,
+        "days": 127, "at": 420,
     })
     row = db.covering_schedules()[0]
     assert row["covering_id"] == "c1"
@@ -439,34 +439,30 @@ def test_scheduling_one_covering_clears_the_group_selector(
 
 
 @pytest.mark.parametrize("over", [
-    {"position": 101}, {"position": "down"}, {"position": None},
-    {"days": 0}, {"days": 999}, {"start_min": 1500},
-    {"start_min": 480, "end_min": 480},
+    {"position": 101}, {"position": -1}, {"position": "down"}, {"position": None},
+    {"days": 0}, {"days": 999}, {"days": "most"},
+    {"at": 1440}, {"at": -1}, {"at": "evening"}, {"at": None},
 ])
 def test_a_bad_schedule_is_rejected(admin_client, hub, room, over):
-    body = {"room_id": room, "position": 50, "days": 127,
-            "start_min": 420, "end_min": 480, **over}
+    body = {"room_id": room, "position": 50, "days": 127, "at": 1020, **over}
     assert admin_client.post("/api/blinds/schedules", json=body).status_code == 400
 
 
 def test_scheduling_an_unknown_covering_is_a_404(admin_client, hub):
     assert admin_client.post("/api/blinds/schedules", json={
-        "covering_id": "ghost", "position": 0, "days": 127,
-        "start_min": 420, "end_min": 480,
+        "covering_id": "ghost", "position": 0, "days": 127, "at": 420,
     }).status_code == 404
 
 
 def test_a_viewer_cannot_schedule(viewer_client, hub, room):
     assert viewer_client.post("/api/blinds/schedules", json={
-        "room_id": room, "position": 0, "days": 127,
-        "start_min": 420, "end_min": 480,
+        "room_id": room, "position": 0, "days": 127, "at": 420,
     }).status_code == 403
 
 
 def test_disabling_and_deleting_a_schedule(admin_client, db, hub, room):
     sid = admin_client.post("/api/blinds/schedules", json={
-        "room_id": room, "position": 0, "days": 127,
-        "start_min": 420, "end_min": 480,
+        "room_id": room, "position": 0, "days": 127, "at": 420,
     }).json()["id"]
     assert admin_client.patch(f"/api/blinds/schedules/{sid}",
                               json={"enabled": False}).status_code == 200
@@ -563,3 +559,68 @@ def test_refresh_is_idempotent(admin_client, monkeypatch, app_module, db, hub):
 def test_a_viewer_cannot_re_enumerate_a_hub(viewer_client, hub):
     """The page-head Refresh falls back to a plain reload for viewers."""
     assert viewer_client.post("/api/blinds/hubs/hub1/refresh").status_code == 403
+
+
+# --- the schedule time contract --------------------------------------------
+
+def test_a_rule_is_a_moment_not_a_span(admin_client, db, hub, room):
+    """The caller gives one time. An end would be a number they had to invent
+    that changes nothing, since the rule fires on the window opening."""
+    r = admin_client.post("/api/blinds/schedules", json={
+        "layer": "blackout", "position": 100, "days": 127, "at": 1020,
+    })
+    assert r.status_code == 200
+    assert r.json()["at"] == 1020
+    row = db.covering_schedules()[0]
+    assert row["start_min"] == 1020
+
+
+def test_the_stored_window_is_a_short_catch_up_grace(admin_client, db, hub):
+    """Wide enough that a restart just after the moment still applies the rule,
+    narrow enough that a shade never moves an hour late."""
+    admin_client.post("/api/blinds/schedules", json={
+        "layer": "blackout", "position": 100, "days": 127, "at": 1020,
+    })
+    row = db.covering_schedules()[0]
+    assert row["end_min"] == 1020 + 10
+
+
+def test_a_rule_near_midnight_wraps(admin_client, db, hub):
+    admin_client.post("/api/blinds/schedules", json={
+        "position": 100, "days": 127, "at": 1435,
+    })
+    row = db.covering_schedules()[0]
+    assert row["start_min"] == 1435
+    assert row["end_min"] == 5      # wrapped, not 1445
+
+
+def test_different_days_can_carry_different_times(admin_client, db, hub):
+    """The whole point: Sundays at 5, Fridays at 7."""
+    admin_client.post("/api/blinds/schedules", json={
+        "layer": "sheer", "position": 100, "days": 0b1000000, "at": 1020,
+    })
+    admin_client.post("/api/blinds/schedules", json={
+        "layer": "sheer", "position": 100, "days": 0b0010000, "at": 1140,
+    })
+    rules = sorted(db.covering_schedules(), key=lambda r: r["start_min"])
+    assert [(r["days"], r["start_min"]) for r in rules] == [
+        (0b1000000, 1020), (0b0010000, 1140)
+    ]
+
+
+def test_a_layer_rule_with_no_room_covers_the_house(admin_client, db, hub):
+    r = admin_client.post("/api/blinds/schedules", json={
+        "layer": "blackout", "position": 100, "days": 127, "at": 1020,
+    })
+    body = r.json()
+    assert body["layer"] == "blackout" and body["room_id"] is None
+
+
+def test_schedules_come_back_with_the_page_payload(admin_client, hub, room):
+    """The page renders in one round trip rather than a second fetch."""
+    admin_client.post("/api/blinds/schedules", json={
+        "layer": "sheer", "position": 0, "days": 127, "at": 420,
+    })
+    payload = admin_client.get("/api/blinds").json()
+    assert [s["at"] for s in payload["schedules"]] == [420]
+    assert payload["schedules"][0]["position"] == 0

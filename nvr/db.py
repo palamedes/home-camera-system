@@ -298,6 +298,38 @@ CREATE TABLE IF NOT EXISTS coverings (
 );
 CREATE INDEX IF NOT EXISTS idx_coverings_room ON coverings(room_id);
 CREATE INDEX IF NOT EXISTS idx_coverings_hub ON coverings(hub_id);
+
+-- Task lists. A list is the *thing* the work belongs to — the house, the boat,
+-- the car — not a workflow stage. It is the board's columns, deliberately: for
+-- a household, "which thing is this about" sorts the work usefully, whereas
+-- To-do/Doing/Done mostly creates a column nobody moves cards out of.
+CREATE TABLE IF NOT EXISTS task_lists (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    color      TEXT    NOT NULL DEFAULT '#2563eb',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- NULL when its list was deleted: the work outlives the category.
+    list_id      INTEGER,
+    title        TEXT    NOT NULL,
+    notes        TEXT,
+    -- NULL means nobody in particular has it yet.
+    assignee_id  INTEGER,
+    -- Epoch seconds, UTC. NULL means no due date, and it stays off the
+    -- calendar. Due tasks are surfaced as all-day calendar entries.
+    due_utc      REAL,
+    done         INTEGER NOT NULL DEFAULT 0,
+    done_utc     REAL,
+    created_by   INTEGER,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks(list_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_utc);
 """
 
 
@@ -379,6 +411,25 @@ class Database:
                     "UPDATE virtual_cameras SET sort_order = ? WHERE id = ?",
                     (base + i, row["id"]),
                 )
+
+        # "Show on grid" used to mean both "on the Cameras page and wall" and
+        # "on the dashboard". Splitting them needs a backfill, not just a
+        # DEFAULT: a plain default of 1 would put every deliberately hidden
+        # camera straight back onto the dashboard.
+        if "show_on_dashboard" not in have:
+            self.execute(
+                "ALTER TABLE cameras ADD COLUMN show_on_dashboard "
+                "INTEGER NOT NULL DEFAULT 1"
+            )
+            self.execute("UPDATE cameras SET show_on_dashboard = show_on_grid")
+        if vcam_cols and "show_on_dashboard" not in vcam_cols:
+            self.execute(
+                "ALTER TABLE virtual_cameras ADD COLUMN show_on_dashboard "
+                "INTEGER NOT NULL DEFAULT 1"
+            )
+            self.execute(
+                "UPDATE virtual_cameras SET show_on_dashboard = show_on_grid"
+            )
 
         # Schedules gained device targets, which also means camera_id had to
         # stop being NOT NULL. SQLite cannot relax a column constraint in place,
@@ -506,6 +557,11 @@ class Database:
 
     def delete_user(self, user_id: int) -> None:
         self.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        # Their tasks survive, unassigned: somebody still has to do the thing,
+        # and jobs vanishing with an account would be a nasty surprise.
+        self.execute(
+            "UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?", (user_id,)
+        )
         self.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     # ---- sessions --------------------------------------------------------
@@ -916,6 +972,112 @@ class Database:
         """Every covering schedule, single-target and group alike."""
         return self.query(
             "SELECT * FROM schedules WHERE action = 'cover' ORDER BY start_min"
+        )
+
+    # ---- task lists and tasks --------------------------------------------
+
+    def task_lists(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM task_lists ORDER BY sort_order, name")
+
+    def task_list(self, list_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM task_lists WHERE id = ?", (list_id,))
+
+    def add_task_list(self, name: str, **fields: Any) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM task_lists")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(("name", *fields))
+        marks = ", ".join("?" for _ in range(len(fields) + 1))
+        cur = self.execute(
+            f"INSERT INTO task_lists ({cols}) VALUES ({marks})",
+            (name, *fields.values()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def update_task_list(self, list_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE task_lists SET {assigns} WHERE id = ?",
+            (*fields.values(), list_id),
+        )
+
+    def delete_task_list(self, list_id: int) -> None:
+        """Deleting a list keeps its tasks — they become uncategorised.
+
+        Same reasoning as rooms: the category is a label, the work is the
+        thing. Cascading would quietly delete somebody's jobs because a
+        heading was tidied up.
+        """
+        self.execute("DELETE FROM task_lists WHERE id = ?", (list_id,))
+        self.execute("UPDATE tasks SET list_id = NULL WHERE list_id = ?", (list_id,))
+
+    def set_task_list_order(self, ordered_ids: list[int]) -> None:
+        for index, list_id in enumerate(ordered_ids):
+            self.execute(
+                "UPDATE task_lists SET sort_order = ? WHERE id = ?", (index, list_id)
+            )
+
+    def tasks(self, include_done: bool = True) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM tasks"
+        if not include_done:
+            sql += " WHERE done = 0"
+        # Undone first, then soonest due (nulls last), then manual order.
+        return self.query(
+            sql + " ORDER BY done, due_utc IS NULL, due_utc, sort_order, id"
+        )
+
+    def task(self, task_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+
+    def tasks_due_between(self, start: float, end: float) -> list[sqlite3.Row]:
+        """Tasks with a due date inside a window, for the calendar.
+
+        Completed tasks stay out: the calendar answers "what is coming up",
+        and a finished chore is not.
+        """
+        return self.query(
+            "SELECT * FROM tasks WHERE due_utc IS NOT NULL AND done = 0 "
+            "AND due_utc >= ? AND due_utc < ? ORDER BY due_utc",
+            (start, end),
+        )
+
+    def add_task(self, title: str, **fields: Any) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM tasks")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(("title", *fields))
+        marks = ", ".join("?" for _ in range(len(fields) + 1))
+        cur = self.execute(
+            f"INSERT INTO tasks ({cols}) VALUES ({marks})", (title, *fields.values())
+        )
+        return int(cur.lastrowid or 0)
+
+    def update_task(self, task_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE tasks SET {assigns} WHERE id = ?", (*fields.values(), task_id)
+        )
+
+    def delete_task(self, task_id: int) -> None:
+        self.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+    def set_task_order(self, ordered_ids: list[int]) -> None:
+        for index, task_id in enumerate(ordered_ids):
+            self.execute(
+                "UPDATE tasks SET sort_order = ? WHERE id = ?", (index, task_id)
+            )
+
+    def unassign_tasks_for_user(self, user_id: int) -> None:
+        """A deleted user's tasks stay, unassigned. Somebody still has to do
+        the thing, and losing the list with the account would be a surprise."""
+        self.execute(
+            "UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?", (user_id,)
         )
 
     # ---- clips -----------------------------------------------------------

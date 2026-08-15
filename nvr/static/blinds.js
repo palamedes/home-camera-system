@@ -112,7 +112,248 @@ function initBlinds() {
       roomsEl.appendChild(el('div', 'muted small',
         'No coverings yet. Use Refresh on a hub to pull in whatever is paired to it.'));
     }
+    roomsEl.appendChild(schedulePanel());
     roomsEl.appendChild(hubPanel());
+  }
+
+  // --- schedules -----------------------------------------------------------
+  //
+  // A rule is a moment, not a span: "at 5pm on Sundays, close the blackouts".
+  // It fires once when its time comes round, so raising a shade by hand
+  // afterwards sticks. "Open in the morning, close in the evening" is two
+  // rules, which is also how people say it — and it is what makes different
+  // times on different days expressible at all.
+
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const DAY_PRESETS = [
+    { label: 'Every day', mask: 0b1111111 },
+    { label: 'Weekdays', mask: 0b0011111 },
+    { label: 'Weekend', mask: 0b1100000 },
+  ];
+
+  function describeDays(mask) {
+    if (mask === 0b1111111) return 'every day';
+    if (mask === 0b0011111) return 'weekdays';
+    if (mask === 0b1100000) return 'weekends';
+    const on = DAY_NAMES.filter((_, i) => mask & (1 << i));
+    return on.length ? on.join(', ') : 'never';
+  }
+
+  function describeTime(minutes) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const suffix = h < 12 ? 'AM' : 'PM';
+    const hour = h % 12 === 0 ? 12 : h % 12;
+    return `${hour}:${String(m).padStart(2, '0')} ${suffix}`;
+  }
+
+  function describePosition(position) {
+    if (position === 0) return 'Open';
+    if (position === 100) return 'Close';
+    return `Move to ${position}% closed`;
+  }
+
+  function describeTarget(rule) {
+    const layer = rule.layer ? layerLabel(rule.layer) : 'All coverings';
+    if (rule.covering_id) {
+      const c = state.coverings.find(x => x.id === rule.covering_id);
+      return c ? c.name : 'One covering';
+    }
+    if (rule.room_id == null) return layer;
+    const room = state.rooms.find(r => r.id === rule.room_id);
+    return `${layer} · ${room ? room.name : 'unknown room'}`;
+  }
+
+  function schedulePanel() {
+    const panel = el('div', 'panel blinds-room');
+
+    const head = el('div', 'list-item blinds-room-title');
+    const headText = el('div', 'grow');
+    headText.appendChild(el('h2', null, 'Schedules'));
+    headText.appendChild(el('div', 'muted small',
+      'Each rule fires once at its time. Move a shade by hand afterwards and it stays put.'));
+    head.appendChild(headText);
+    if (state.can_edit) {
+      const add = el('button', 'btn btn-sm btn-primary', 'Add schedule');
+      add.type = 'button';
+      add.addEventListener('click', () => editRule(null));
+      head.appendChild(add);
+    }
+    panel.appendChild(head);
+
+    const list = el('div', 'blinds-list');
+    const rules = (state.schedules || [])
+      .slice()
+      .sort((a, b) => a.at - b.at);
+    if (!rules.length) {
+      list.appendChild(el('div', 'list-item muted small',
+        'No schedules yet. Add one to close the blackouts at sunset, or open the '
+        + 'sheers in the morning.'));
+    } else {
+      for (const rule of rules) list.appendChild(ruleRow(rule));
+    }
+    panel.appendChild(list);
+    return panel;
+  }
+
+  function ruleRow(rule) {
+    const item = el('div', 'list-item');
+    item.appendChild(el('span', 'dot ' + (rule.enabled ? 'dot-ok' : 'dot-off')));
+
+    const grow = el('div', 'grow');
+    const title = el('div', 'title',
+      `${describePosition(rule.position)} — ${describeTarget(rule)}`);
+    if (!rule.enabled) title.appendChild(el('span', 'pill pill-off', 'Paused'));
+    grow.appendChild(title);
+    grow.appendChild(el('div', 'sub muted small',
+      `${describeTime(rule.at)} · ${describeDays(rule.days)}`));
+    item.appendChild(grow);
+
+    if (state.can_edit) {
+      const pause = el('button', 'btn btn-sm', rule.enabled ? 'Pause' : 'Resume');
+      pause.type = 'button';
+      pause.addEventListener('click', async () => {
+        pause.disabled = true;
+        try {
+          await api(`/api/blinds/schedules/${rule.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: !rule.enabled }),
+          });
+          await load();
+        } catch (err) { say(err.message, true); }
+        finally { pause.disabled = false; }
+      });
+      item.appendChild(pause);
+
+      const remove = el('button', 'remove-x', '×');
+      remove.title = 'Delete schedule';
+      remove.setAttribute('aria-label', 'Delete schedule');
+      remove.addEventListener('click', async () => {
+        if (!confirm('Delete this schedule?')) return;
+        try {
+          await api(`/api/blinds/schedules/${rule.id}`, { method: 'DELETE' });
+          await load();
+        } catch (err) { say(err.message, true); }
+      });
+      item.appendChild(remove);
+    }
+    return item;
+  }
+
+  function editRule() {
+    const body = openModal('Add schedule');
+
+    // What to move.
+    const layer = document.createElement('select');
+    for (const opt of [...state.layers, { value: '', label: 'Both layers' }]) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      layer.appendChild(o);
+    }
+    body.appendChild(field('Move', layer));
+
+    const room = document.createElement('select');
+    const allRooms = document.createElement('option');
+    allRooms.value = '';
+    allRooms.textContent = 'Everywhere';
+    room.appendChild(allRooms);
+    for (const r of state.rooms) {
+      const o = document.createElement('option');
+      o.value = String(r.id);
+      o.textContent = r.name;
+      room.appendChild(o);
+    }
+    body.appendChild(field('Where', room));
+
+    // What to do.
+    const action = document.createElement('select');
+    for (const [value, label] of [['100', 'Close'], ['0', 'Open'], ['custom', 'Part way…']]) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      action.appendChild(o);
+    }
+    body.appendChild(field('Do', action));
+
+    const custom = document.createElement('input');
+    custom.type = 'number';
+    custom.min = '0';
+    custom.max = '100';
+    custom.step = '5';
+    custom.value = '50';
+    const customField = field('Percent closed', custom);
+    customField.hidden = true;
+    body.appendChild(customField);
+    action.addEventListener('change', () => {
+      customField.hidden = action.value !== 'custom';
+    });
+
+    // When.
+    const at = document.createElement('input');
+    at.type = 'time';
+    at.value = '17:00';
+    body.appendChild(field('At', at));
+
+    const daysWrap = el('div', 'field');
+    daysWrap.appendChild(el('label', null, 'On'));
+    const presets = el('div', 'blinds-day-presets');
+    const boxes = [];
+    for (let i = 0; i < 7; i++) {
+      const label = el('label', 'blinds-day');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = true;
+      boxes.push(box);
+      label.appendChild(box);
+      label.appendChild(el('span', null, DAY_NAMES[i]));
+      presets.appendChild(label);
+    }
+    daysWrap.appendChild(presets);
+
+    const quick = el('div', 'blinds-day-quick');
+    for (const preset of DAY_PRESETS) {
+      const b = el('button', 'btn btn-sm', preset.label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        boxes.forEach((box, i) => { box.checked = Boolean(preset.mask & (1 << i)); });
+      });
+      quick.appendChild(b);
+    }
+    daysWrap.appendChild(quick);
+    body.appendChild(daysWrap);
+
+    const save = el('button', 'btn btn-primary', 'Add schedule');
+    save.type = 'button';
+    save.addEventListener('click', async () => {
+      const [hh, mm] = (at.value || '').split(':');
+      const minutes = Number(hh) * 60 + Number(mm);
+      if (!Number.isFinite(minutes)) { say('Pick a time.', true); return; }
+      let mask = 0;
+      boxes.forEach((box, i) => { if (box.checked) mask |= (1 << i); });
+      if (!mask) { say('Pick at least one day.', true); return; }
+      const position = action.value === 'custom'
+        ? Number(custom.value) : Number(action.value);
+      save.disabled = true;
+      try {
+        await post('/api/blinds/schedules', {
+          layer: layer.value || null,
+          room_id: room.value === '' ? null : Number(room.value),
+          position,
+          at: minutes,
+          days: mask,
+        });
+        closeModal();
+        await load();
+        say('Schedule added.');
+      } catch (err) {
+        say(err.message, true);
+      } finally {
+        save.disabled = false;
+      }
+    });
+    body.appendChild(save);
   }
 
   function emptyState() {

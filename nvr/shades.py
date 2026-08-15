@@ -9,10 +9,14 @@ cameras.
 Wire protocol
 -------------
 * Commands go to the hub on port 32100, unicast or to multicast 238.0.0.18.
-* The hub pushes unsolicited state changes and a 30-60s heartbeat on
-  238.0.0.18:32101, which is how we learn that somebody used the wall remote.
 * Three messages matter: GetDeviceList (enumerate), ReadDevice (poll one),
   WriteDevice (move one).
+* The hub is documented as pushing unsolicited state changes and a 30-60s
+  heartbeat on 238.0.0.18:32101 — which would be how we learn somebody used
+  the wall remote. NOT USED: measured on this network, ninety seconds of
+  listening on that group heard nothing, because the access point filters
+  multicast in both directions (the same reason discovery has to sweep by
+  unicast). State is therefore refreshed by polling, never by push.
 
 Authentication is the interesting part. GetDeviceList and ReadDevice are
 unauthenticated — we can discover the hub and read every motor's position,

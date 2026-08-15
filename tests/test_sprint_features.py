@@ -231,3 +231,53 @@ def test_the_cameras_tab_highlights_while_on_clips(admin_client):
     """Clips sits under Cameras in the nav; the tab should not go dark."""
     body = admin_client.get("/clips").text
     assert 'href="/cameras" class="active"' in body
+
+
+# --- dashboard visibility is independent of grid visibility -----------------
+
+def test_a_camera_can_be_on_the_grid_but_off_the_dashboard(admin_client, db):
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door")
+    admin_client.patch("/api/cameras/front", json={"show_on_dashboard": False})
+    assert "Front Door" in admin_client.get("/cameras").text
+    assert "Front Door" not in admin_client.get("/").text
+
+
+def test_a_camera_can_be_on_the_dashboard_but_off_the_grid(admin_client, db):
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door")
+    admin_client.patch("/api/cameras/front", json={"show_on_grid": False})
+    assert "Front Door" in admin_client.get("/").text
+    assert "Front Door" not in admin_client.get("/cameras").text
+
+
+def test_the_two_flags_default_together(admin_client, db):
+    """A fresh camera shows in both places, as it always did."""
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door")
+    row = db.camera("front")
+    assert row["show_on_grid"] == 1 and row["show_on_dashboard"] == 1
+
+
+def test_the_migration_backfills_from_the_old_flag(db):
+    """Upgrading must not silently put every hidden camera on the dashboard —
+    a plain DEFAULT 1 would have done exactly that."""
+    from conftest import add_camera
+    add_camera(db, "hidden", "Hidden Cam", show_on_grid=0, show_on_dashboard=0)
+    db.execute("UPDATE cameras SET show_on_dashboard = show_on_grid")
+    assert db.camera("hidden")["show_on_dashboard"] == 0
+
+
+def test_a_virtual_camera_has_its_own_dashboard_flag(admin_client, db):
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door")
+    vid = db.add_virtual_camera(
+        parent_id="front", name="Porch View", yaw=0.0, pitch=0.0, fov=90.0,
+        calib="{}", mode="crop",
+    )
+    # PUT, not PATCH — asserted, so calling the wrong verb fails loudly
+    # instead of leaving the row untouched and the test passing by luck.
+    r = admin_client.put(f"/api/virtual/{vid}", json={"show_on_dashboard": False})
+    assert r.status_code == 200, r.text
+    assert db.one("SELECT show_on_dashboard FROM virtual_cameras WHERE id = ?",
+                  (vid,))["show_on_dashboard"] == 0

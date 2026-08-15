@@ -193,3 +193,47 @@ def test_a_covering_schedule_is_either_one_covering_or_a_group(db):
     with pytest.raises(ValueError):
         db.add_schedule(action="cover", covering_id="c1", covering_room_id=1,
                         days=127, start_min=0, end_min=60)
+
+
+# --- the 10-minute grace window, which is the real production shape ---------
+
+def test_a_grace_window_fires_once_across_its_whole_span(db, sched, house, moves):
+    db.add_schedule(action="cover", covering_id="bed-black", days=127,
+                    start_min=1020, end_min=1030, value="100")
+    for minute in range(1020, 1031):
+        sched.apply(MON, minute)
+    assert moves == [("bed-black", 100)]
+
+
+def test_a_restart_inside_the_grace_window_still_applies_the_rule(db, house, moves):
+    """Edge state lives in memory, so a fresh scheduler mid-window sees a rising
+    edge and catches up — which is what the grace period is for."""
+    db.add_schedule(action="cover", covering_id="bed-black", days=127,
+                    start_min=1020, end_min=1030, value="100")
+    restarted = SchedulerService(config=None, db=db)
+    restarted.apply(MON, 1026)          # came up 6 minutes late
+    assert moves == [("bed-black", 100)]
+
+
+def test_a_restart_after_the_grace_window_does_not_move_anything(db, house, moves):
+    """Hours later is not a catch-up, it is a shade moving on its own."""
+    db.add_schedule(action="cover", covering_id="bed-black", days=127,
+                    start_min=1020, end_min=1030, value="100")
+    restarted = SchedulerService(config=None, db=db)
+    restarted.apply(MON, 1200)
+    assert moves == []
+
+
+def test_two_rules_at_different_times_on_different_days(db, sched, house, moves):
+    """Sundays at 5pm, Fridays at 7pm — the case that motivated the design."""
+    db.add_schedule(action="cover", covering_layer="sheer", days=0b1000000,
+                    start_min=1020, end_min=1030, value="100")   # Sunday 17:00
+    db.add_schedule(action="cover", covering_layer="sheer", days=0b0010000,
+                    start_min=1140, end_min=1150, value="100")   # Friday 19:00
+    sched.apply(6, 1020)                      # Sunday 17:00
+    sunday = len(moves)
+    assert sunday == 2                        # both sheers
+    sched.apply(6, 1140)                      # Sunday 19:00 — Friday rule idle
+    assert len(moves) == sunday
+    sched.apply(4, 1140)                      # Friday 19:00
+    assert len(moves) == sunday + 2

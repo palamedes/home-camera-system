@@ -132,7 +132,13 @@ function initCalendar() {
       for (const event of todays.slice(0, 3)) {
         const pill = el('span', 'cal-event');
         const dot = el('span', 'cal-dot');
-        dot.style.background = colorOf(event.calendar_id);
+        if (event.kind === 'task') {
+          // Hollow dot: a due date is a deadline, not an appointment, and at a
+          // glance the two should not look like the same kind of commitment.
+          dot.classList.add('cal-dot-task');
+        } else {
+          dot.style.background = colorOf(event.calendar_id);
+        }
         pill.appendChild(dot);
         pill.appendChild(el('span', 'cal-event-title',
           (event.all_day ? '' : fmtTime(event.start) + ' ') + event.title));
@@ -176,6 +182,12 @@ function initCalendar() {
 
   function eventCard(event) {
     const card = el('div', 'cal-card');
+
+    // A task's due date rides along in the events feed but is not an event:
+    // it lives in the task list, so it is shown read-only here with a link
+    // back rather than Edit/Delete buttons that would edit the wrong thing.
+    if (event.kind === 'task') return taskCard(event, card);
+
     card.style.borderLeftColor = colorOf(event.calendar_id);
 
     const head = el('div', 'cal-card-head');
@@ -205,6 +217,41 @@ function initCalendar() {
       load();
     });
     actions.appendChild(del);
+    card.appendChild(actions);
+    return card;
+  }
+
+  function taskCard(task, card) {
+    card.classList.add('cal-card-task');
+    const head = el('div', 'cal-card-head');
+    head.appendChild(el('strong', null, task.title));
+    head.appendChild(el('span', 'pill', 'Task'));
+    card.appendChild(head);
+    card.appendChild(el('div', 'muted small', 'Due today'));
+    if (task.description) {
+      card.appendChild(el('div', 'small cal-desc', task.description));
+    }
+
+    const actions = el('div', 'row');
+    actions.style.cssText = 'gap:8px;margin-top:8px';
+    const open = document.createElement('a');
+    open.className = 'btn btn-sm';
+    open.href = '/tasks';
+    open.textContent = 'Open in Tasks';
+    actions.appendChild(open);
+
+    const done = el('button', 'btn btn-sm', 'Mark done');
+    done.type = 'button';
+    done.addEventListener('click', async () => {
+      done.disabled = true;
+      await fetch(`/api/tasks/${task.task_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: true }),
+      });
+      load();
+    });
+    actions.appendChild(done);
     card.appendChild(actions);
     return card;
   }
