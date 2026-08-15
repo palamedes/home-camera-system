@@ -1153,3 +1153,142 @@ a.title:hover { color: var(--accent); }
   .volume-row .vol-cap { grid-column: 2; }
   .volume-row .vol-usage { grid-column: 1 / -1; }
 }
+
+/* ---- blinds (motorised window coverings) ---- */
+
+.blinds-allbar { margin-bottom: 16px; }
+.blinds-room { margin-bottom: 16px; }
+
+/* The room's title row is a plain .list-item so the .remove-x strip lands
+   flush to the panel edge, exactly as it does on the settings rows. */
+.blinds-room-title h2 { margin: 0; font-size: 16px; }
+.blinds-room-title .remove-x { border-top-right-radius: var(--radius); }
+
+/* Group controls live in their own band. Inside the title row they would
+   stretch it, and stretch the delete strip along with it. */
+.blinds-room-actions {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The clusters sit centred as a set within their band. */
+.blinds-group {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A labelled cluster of group buttons. Stacked rather than inline: with the
+   label beside the buttons, three clusters in a row read as one long jumble. */
+.blinds-group-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.blinds-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Buttons size to their own labels and sit centred within the cluster, while
+   the group name above stays left-aligned. They previously took flex:1, which
+   stretched them edge to edge and left nothing to centre. */
+.blinds-group-btns {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.blinds-allbar-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.blinds-allbar-head h2 { margin: 0; font-size: 16px; }
+
+/* Collapsible reference at the foot of the page. */
+.blinds-help { margin-top: 22px; }
+/* A row, so the caret sits beside the title rather than above it; the two
+   text lines stack inside their own column. */
+.blinds-help > summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 14.5px;
+  list-style: none;
+}
+.blinds-help-text { display: flex; flex-direction: column; gap: 2px; }
+.blinds-help > summary::-webkit-details-marker { display: none; }
+.blinds-help > summary::before {
+  content: "\25B8";
+  color: var(--muted);
+  display: inline-block;
+  flex: none;
+  /* Matches the title's line box so the caret lines up with the first line. */
+  line-height: 1.5;
+  transition: transform .15s;
+}
+.blinds-help[open] > summary::before { transform: rotate(90deg); }
+.blinds-help[open] > summary { border-bottom: 1px solid var(--line); }
+.blinds-help-body { max-width: 70ch; }
+.blinds-help-body h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  margin: 18px 0 6px;
+}
+.blinds-help-body h3:first-child { margin-top: 0; }
+.blinds-help-body ol,
+.blinds-help-body ul { margin: 0; padding-left: 20px; font-size: 13.5px; }
+.blinds-help-body li { margin-bottom: 5px; }
+.blinds-help-body p { font-size: 13.5px; }
+
+.blinds-list > .list-item:last-child { border-bottom: none; }
+
+.blinds-item { gap: 10px; flex-wrap: wrap; }
+
+.blinds-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 170px;
+}
+.blinds-slider input[type="range"] { width: 120px; }
+
+@media (max-width: 720px) {
+  .blinds-group { width: 100%; }
+  .blinds-slider { width: 100%; }
+  .blinds-slider input[type="range"] { flex: 1; width: auto; }
+}
+
+/* Discovery results. The modal's global "buttons are full width" rule is for
+   stacked form actions; inside a result row it would sit on top of the text. */
+.found-hub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.found-hub:last-of-type { border-bottom: none; }
+.found-hub-info { flex: 1; min-width: 0; }
+.found-hub .title { font-weight: 550; font-size: 14.5px; }
+.modal-body .found-hub .btn {
+  width: auto;
+  flex: none;
+  margin-top: 0;
+}

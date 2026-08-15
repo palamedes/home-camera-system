@@ -236,6 +236,68 @@ CREATE TABLE IF NOT EXISTS devices (
     sort_order  INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL
 );
+
+-- Rooms. Purely an organising layer for window coverings today; the eventual
+-- top-down floorplan view hangs off this table too, which is why the geometry
+-- columns exist now rather than as a later migration.
+CREATE TABLE IF NOT EXISTS rooms (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    -- Reserved for the floorplan: a stored image and this room's outline on it.
+    plan_image TEXT,
+    plan_shape TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+-- Connector / Motionblinds bridges. One box drives every motor paired to it
+-- over 433 MHz; Sentry talks to the box over UDP on the LAN.
+CREATE TABLE IF NOT EXISTS shade_hubs (
+    id         TEXT    PRIMARY KEY,   -- the hub's MAC, as the protocol reports it
+    name       TEXT    NOT NULL,
+    host       TEXT    NOT NULL,
+    -- 16-character key from the vendor app, dashes included. NULL means
+    -- read-only: discovery and polling still work, writes may be refused.
+    api_key    TEXT,
+    -- Last token the hub handed out. Half of the AccessToken handshake, and it
+    -- changes when the hub restarts, so it is refreshed rather than trusted.
+    token      TEXT,
+    protocol   TEXT,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    last_seen  REAL,
+    last_error TEXT,
+    created_at INTEGER NOT NULL
+);
+
+-- Window coverings: one motorised shade or blind.
+CREATE TABLE IF NOT EXISTS coverings (
+    id            TEXT    PRIMARY KEY,  -- device MAC from the hub
+    hub_id        TEXT    NOT NULL,
+    room_id       INTEGER,
+    name          TEXT    NOT NULL,
+    -- The layer this covering forms on the window. A dual-roller window has
+    -- one of each: 'sheer' is light-filtering (you can see through it),
+    -- 'blackout' is room-darkening (you cannot). Grouping actions key off this.
+    layer         TEXT    NOT NULL DEFAULT 'sheer',
+    -- 'shade' (rolls up) | 'blind' (slatted, tilts) | 'curtain'. Only affects
+    -- wording and whether a tilt control is offered.
+    kind          TEXT    NOT NULL DEFAULT 'shade',
+    device_type   TEXT    NOT NULL DEFAULT '10000000',
+    -- Whether the motor reports its real position, or can only be commanded.
+    bidirectional INTEGER NOT NULL DEFAULT 0,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    -- Cached telemetry so the page renders instantly instead of waiting on RF.
+    -- Position is the protocol's own scale: 0 open, 100 closed.
+    last_position INTEGER,
+    battery_mv    INTEGER,
+    rssi          INTEGER,
+    last_seen     REAL,
+    last_error    TEXT,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coverings_room ON coverings(room_id);
+CREATE INDEX IF NOT EXISTS idx_coverings_hub ON coverings(hub_id);
 """
 
 
@@ -351,6 +413,20 @@ class Database:
                     COMMIT;
                     """
                 )
+
+        # Window-covering targets. A covering schedule either names one covering
+        # or describes a group ("the blackouts in the bedroom"), so the selector
+        # columns are nullable and read as "any".
+        sched_cols = {row["name"] for row in self.query("PRAGMA table_info(schedules)")}
+        covering_additions = {
+            "covering_id": "ALTER TABLE schedules ADD COLUMN covering_id TEXT",
+            # NULL room = every room; NULL layer = both layers.
+            "covering_room_id": "ALTER TABLE schedules ADD COLUMN covering_room_id INTEGER",
+            "covering_layer": "ALTER TABLE schedules ADD COLUMN covering_layer TEXT",
+        }
+        for column, statement in covering_additions.items():
+            if sched_cols and column not in sched_cols:
+                self.execute(statement)
 
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
         if "role" not in user_cols:
@@ -691,6 +767,157 @@ class Database:
         # delete_camera fell into.
         self.execute("DELETE FROM schedules WHERE device_id = ?", (device_id,))
 
+    # ---- rooms -----------------------------------------------------------
+
+    def rooms(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM rooms ORDER BY sort_order, name")
+
+    def room(self, room_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM rooms WHERE id = ?", (room_id,))
+
+    def add_room(self, name: str, **fields: Any) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM rooms")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(("name", *fields))
+        marks = ", ".join("?" for _ in range(len(fields) + 1))
+        cur = self.execute(
+            f"INSERT INTO rooms ({cols}) VALUES ({marks})",
+            (name, *fields.values()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def update_room(self, room_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE rooms SET {assigns} WHERE id = ?", (*fields.values(), room_id)
+        )
+
+    def delete_room(self, room_id: int) -> None:
+        """Deleting a room keeps its coverings — they become unassigned.
+
+        Losing a room must never lose the hardware behind it; an orphaned
+        covering is visible under "Unassigned" and can be re-homed, whereas a
+        cascaded one would have to be rediscovered from the hub.
+        """
+        self.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+        self.execute("UPDATE coverings SET room_id = NULL WHERE room_id = ?", (room_id,))
+        self.execute(
+            "DELETE FROM schedules WHERE covering_room_id = ?", (room_id,)
+        )
+
+    def set_room_order(self, ordered_ids: list[int]) -> None:
+        for index, room_id in enumerate(ordered_ids):
+            self.execute(
+                "UPDATE rooms SET sort_order = ? WHERE id = ?", (index, room_id)
+            )
+
+    # ---- shade hubs ------------------------------------------------------
+
+    def shade_hubs(self, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM shade_hubs"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        return self.query(sql + " ORDER BY name")
+
+    def shade_hub(self, hub_id: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM shade_hubs WHERE id = ?", (hub_id,))
+
+    def add_shade_hub(self, **fields: Any) -> None:
+        fields.setdefault("created_at", int(time.time()))
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        self.execute(
+            f"INSERT INTO shade_hubs ({cols}) VALUES ({marks})", tuple(fields.values())
+        )
+
+    def update_shade_hub(self, hub_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE shade_hubs SET {assigns} WHERE id = ?", (*fields.values(), hub_id)
+        )
+
+    def delete_shade_hub(self, hub_id: str) -> None:
+        """Removing a hub removes the coverings behind it, and their schedules.
+
+        Unlike a room, a covering cannot outlive its hub — there is no other
+        way to reach the motor. Same cascade trap as delete_camera.
+        """
+        for covering in self.coverings(hub_id=hub_id):
+            self.execute(
+                "DELETE FROM schedules WHERE covering_id = ?", (covering["id"],)
+            )
+        self.execute("DELETE FROM coverings WHERE hub_id = ?", (hub_id,))
+        self.execute("DELETE FROM shade_hubs WHERE id = ?", (hub_id,))
+
+    # ---- coverings (shades / blinds) -------------------------------------
+
+    def coverings(self, hub_id: str | None = None, room_id: int | None = None,
+                  enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM coverings"
+        clauses, params = [], []
+        if hub_id is not None:
+            clauses.append("hub_id = ?")
+            params.append(hub_id)
+        if room_id is not None:
+            clauses.append("room_id = ?")
+            params.append(room_id)
+        if enabled_only:
+            clauses.append("enabled = 1")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        return self.query(sql + " ORDER BY sort_order, name", params)
+
+    def covering(self, covering_id: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM coverings WHERE id = ?", (covering_id,))
+
+    def add_covering(self, **fields: Any) -> None:
+        fields.setdefault("created_at", int(time.time()))
+        if "sort_order" not in fields:
+            row = self.one("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM coverings")
+            fields["sort_order"] = row["n"] if row else 0
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        self.execute(
+            f"INSERT INTO coverings ({cols}) VALUES ({marks})", tuple(fields.values())
+        )
+
+    def update_covering(self, covering_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE coverings SET {assigns} WHERE id = ?",
+            (*fields.values(), covering_id),
+        )
+
+    def delete_covering(self, covering_id: str) -> None:
+        self.execute("DELETE FROM coverings WHERE id = ?", (covering_id,))
+        self.execute("DELETE FROM schedules WHERE covering_id = ?", (covering_id,))
+
+    def set_covering_order(self, ordered_ids: list[str]) -> None:
+        for index, covering_id in enumerate(ordered_ids):
+            self.execute(
+                "UPDATE coverings SET sort_order = ? WHERE id = ?", (index, covering_id)
+            )
+
+    def schedules_for_covering(self, covering_id: str) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM schedules WHERE covering_id = ? ORDER BY start_min",
+            (covering_id,),
+        )
+
+    def covering_schedules(self) -> list[sqlite3.Row]:
+        """Every covering schedule, single-target and group alike."""
+        return self.query(
+            "SELECT * FROM schedules WHERE action = 'cover' ORDER BY start_min"
+        )
+
     # ---- clips -----------------------------------------------------------
 
     def clips(self) -> list[sqlite3.Row]:
@@ -739,18 +966,37 @@ class Database:
     def add_schedule(
         self, camera_id: str | None = None, action: str = "record", days: int = 127,
         start_min: int = 0, end_min: int = 0, value: str = "on", enabled: int = 1,
-        device_id: str | None = None,
+        device_id: str | None = None, covering_id: str | None = None,
+        covering_room_id: int | None = None, covering_layer: str | None = None,
     ) -> int:
-        """A schedule targets exactly one thing: a camera or a device."""
-        if bool(camera_id) == bool(device_id):
-            raise ValueError("a schedule needs exactly one of camera_id/device_id")
+        """A schedule targets exactly one kind of thing: a camera, a device, or
+        window coverings.
+
+        Coverings are the one target that can be a *selector* instead of an id —
+        "the blackouts in the bedroom", or with both selector fields NULL,
+        "every covering in the house". So a covering schedule is identified by
+        its action rather than by a non-NULL id, which is why the check below
+        is not simply "exactly one id is set".
+        """
+        is_cover = action == "cover"
+        if sum((bool(camera_id), bool(device_id), is_cover)) != 1:
+            raise ValueError(
+                "a schedule needs exactly one target: camera_id, device_id, "
+                "or action='cover'"
+            )
+        if not is_cover and (covering_id or covering_room_id or covering_layer):
+            raise ValueError("covering fields require action='cover'")
+        if is_cover and covering_id and (covering_room_id or covering_layer):
+            raise ValueError(
+                "a covering schedule names one covering or a group, not both"
+            )
         cur = self.execute(
             "INSERT INTO schedules "
-            "(camera_id, device_id, action, days, start_min, end_min, value, "
-            " enabled, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (camera_id, device_id, action, days, start_min, end_min, value, enabled,
-             int(time.time())),
+            "(camera_id, device_id, covering_id, covering_room_id, covering_layer, "
+            " action, days, start_min, end_min, value, enabled, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (camera_id, device_id, covering_id, covering_room_id, covering_layer,
+             action, days, start_min, end_min, value, enabled, int(time.time())),
         )
         return int(cur.lastrowid or 0)
 

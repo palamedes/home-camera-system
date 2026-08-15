@@ -7,6 +7,11 @@
     <h1>Clips</h1>
     <p>{{ clips|length }} saved clip{{ '' if clips|length == 1 else 's' }} &middot; kept on the box, never pruned</p>
   </div>
+  {# Clips is reached from a button on Cameras rather than its own nav tab, so
+     it needs its own way back. #}
+  <div class="row" style="flex: 0 0 auto;">
+    <a href="/cameras" class="btn">Back to cameras</a>
+  </div>
 </div>
 
 {% if clips %}

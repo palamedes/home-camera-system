@@ -7,8 +7,11 @@
     <h1>Cameras</h1>
     <p>{{ total }} camera{{ '' if total == 1 else 's' }}{% if virtuals %} &middot; {{ virtuals|length }} virtual{% endif %}</p>
   </div>
-  <div class="row" style="flex: 0 0 auto;">
+  <div class="row" style="flex: 0 0 auto; gap: 8px;">
     {% if cameras or virtuals %}<a href="/wall" class="btn">Wall view</a>{% endif %}
+    {# Unconditional: saved clips outlive the cameras they came from, so this
+       must stay reachable even when every camera has been removed. #}
+    <a href="/clips" class="btn">Clips</a>
   </div>
 </div>
 {% if is_admin and items|length > 1 %}

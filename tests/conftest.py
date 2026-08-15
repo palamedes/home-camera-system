@@ -68,7 +68,8 @@ def db(app_module):
     d = app_module.db
     for table in ("clips", "virtual_cameras", "segments", "schedules",
                   "events", "app_settings", "devices", "calendar_events",
-                  "calendars", "cameras", "sessions", "users"):
+                  "calendars", "coverings", "shade_hubs", "rooms",
+                  "cameras", "sessions", "users"):
         d.execute(f"DELETE FROM {table}")
     return d
 

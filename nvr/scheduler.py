@@ -39,9 +39,9 @@ try:  # pragma: no cover - trivial import guard
 except Exception:  # noqa: BLE001 - any import failure means "not available"
     camera_control = None  # type: ignore[assignment]
 
-from . import devices
+from . import devices, shades
 
-VALID_ACTIONS = frozenset({"record", "light", "nightvision", "power"})
+VALID_ACTIONS = frozenset({"record", "light", "nightvision", "power", "cover"})
 VALID_NV_MODES = frozenset({"auto", "color", "bw"})
 
 # How often the loop re-evaluates. Minute-resolution windows don't need finer.
@@ -97,6 +97,9 @@ class SchedulerService:
         # command, so an unreachable relay is retried on the next tick instead
         # of being assumed applied.
         self._device_state: dict[str, bool] = {}
+        # Covering schedules fire once when their window opens, so all we track
+        # is whether each rule was inside its window on the previous pass.
+        self._cover_inside: dict[int, bool] = {}
 
     def start(self) -> None:
         self._stop.clear()
@@ -132,6 +135,77 @@ class SchedulerService:
         self._apply_light(rows, weekday, minute)
         self._apply_nightvision(rows, weekday, minute)
         self._apply_device_power(rows, weekday, minute)
+        self._apply_coverings(rows, weekday, minute)
+
+    def _apply_coverings(self, rows: list[Any], weekday: int, minute: int) -> None:
+        """Move window coverings when a schedule's window opens.
+
+        Rising edge only, unlike relays. A relay schedule is authoritative
+        ("on 18:00-23:00" also means "off otherwise"), but a shade is not: if
+        you raise it by hand at noon it should stay up, not be dragged back
+        down every thirty seconds until the window ends. "Open at seven, close
+        at sunset" is naturally two rules, which is also how a person says it.
+        """
+        for s in rows:
+            if s["action"] != "cover":
+                continue
+            active = in_window(
+                s["days"], s["start_min"], s["end_min"], weekday, minute
+            )
+            sid = s["id"]
+            was_inside = self._cover_inside.get(sid, False)
+            self._cover_inside[sid] = active
+            if not active or was_inside:
+                continue
+            try:
+                position = max(0, min(100, int(s["value"])))
+            except (TypeError, ValueError):
+                log.warning("covering schedule %s has a bad position %r",
+                            sid, s["value"])
+                continue
+            for covering in self._covering_targets(s):
+                self._move_covering(covering, position)
+
+    def _covering_targets(self, schedule: Any) -> list[Any]:
+        """Resolve a schedule to the coverings it should move.
+
+        Either one named covering, or a group: NULL room means every room and
+        NULL layer means both layers, so a rule with neither set is "the whole
+        house".
+        """
+        if schedule["covering_id"]:
+            covering = self.db.covering(schedule["covering_id"])
+            return [covering] if covering and covering["enabled"] else []
+        room_id = schedule["covering_room_id"]
+        rows = (self.db.coverings(room_id=room_id, enabled_only=True)
+                if room_id is not None else self.db.coverings(enabled_only=True))
+        layer = schedule["covering_layer"]
+        if layer:
+            rows = [r for r in rows if r["layer"] == layer]
+        return rows
+
+    def _move_covering(self, covering: Any, position: int) -> None:
+        """One covering, best effort — a motor out of radio range must not stop
+        the rest of the group, nor kill the scheduler loop."""
+        hub = self.db.shade_hub(covering["hub_id"])
+        if hub is None or not hub["enabled"]:
+            return
+        try:
+            shades.set_position(
+                hub["host"], covering["id"], covering["device_type"], position,
+                api_key=hub["api_key"], hub_token=hub["token"],
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad motor must not stop the pass
+            log.warning("schedule could not move %s: %s", covering["id"], exc)
+            self.db.update_covering(
+                covering["id"], last_error=str(exc), last_seen=time.time()
+            )
+            return
+        self.db.update_covering(
+            covering["id"], last_position=position, last_seen=time.time(),
+            last_error=None,
+        )
+        log.info("schedule moved %s to %s", covering["id"], position)
 
     def _apply_device_power(self, rows: list[Any], weekday: int, minute: int) -> None:
         """Switch relays on/off for their windows.

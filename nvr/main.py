@@ -27,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (
     appsettings, auth, camera_control, config as config_module, devices as devicelib,
-    discovery, playback, proxy, streamprobe, streams,
+    discovery, playback, proxy, shades as shadelib, streamprobe, streams,
 )
 from .db import Database
 from .alerts import AlertService
@@ -1818,6 +1818,679 @@ async def api_hook_device(device_id: str, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=502)
     _remember(device_id, result, None)
     return JSONResponse({"ok": True, "state": result})
+
+
+# ---------------------------------------------------------------------------
+# Blinds — rooms and motorised window coverings on a Connector/Motionblinds hub.
+#
+# Viewers may look and may operate; only admins may add hardware, rename things
+# or change schedules. Opening a blind is closer to switching on a lamp than to
+# reconfiguring the NVR, and a household where only one person can raise the
+# shades is not a household feature. The admin gate is therefore applied per
+# route below rather than by a blanket /api prefix rule.
+# ---------------------------------------------------------------------------
+
+LAYERS = ("sheer", "blackout")
+LAYER_LABELS = {"sheer": "Light filtering", "blackout": "Blackout"}
+COVERING_KINDS = ("shade", "blind", "curtain")
+
+_HUB_SECRET_FIELDS = ("api_key", "token")
+
+
+def _is_admin(request: Request) -> bool:
+    return auth.is_admin(auth.current_user(request))
+
+
+def _forbidden() -> JSONResponse:
+    return JSONResponse({"error": "forbidden"}, status_code=403)
+
+
+def _room_dict(row: Any) -> dict[str, Any]:
+    return {"id": row["id"], "name": row["name"], "sort_order": row["sort_order"]}
+
+
+def _covering_dict(row: Any) -> dict[str, Any]:
+    data = {k: row[k] for k in row.keys()}
+    data["enabled"] = bool(data.get("enabled"))
+    data["bidirectional"] = bool(data.get("bidirectional"))
+    data["layer_label"] = LAYER_LABELS.get(data.get("layer"), data.get("layer"))
+    data["battery_percent"] = shadelib.battery_percent(data.get("battery_mv"))
+    # Volts is the number to trust; percent is an estimate off a linear curve.
+    mv = data.get("battery_mv")
+    data["battery_volts"] = round(mv / 100, 2) if mv else None
+    return data
+
+
+def _hub_dict(row: Any) -> dict[str, Any]:
+    data = {k: row[k] for k in row.keys()}
+    for field in _HUB_SECRET_FIELDS:
+        data.pop(field, None)
+    # Whether a key is set is not a secret, and the UI needs it to explain why
+    # a write failed.
+    data["has_key"] = bool(row["api_key"])
+    data["enabled"] = bool(data.get("enabled"))
+    return data
+
+
+def _remember_covering(covering_id: str, summary: dict[str, Any] | None,
+                       error: str | None) -> None:
+    fields: dict[str, Any] = {"last_seen": time.time(), "last_error": error}
+    if summary:
+        if summary.get("position") is not None:
+            fields["last_position"] = summary["position"]
+        if summary.get("battery_mv") is not None:
+            fields["battery_mv"] = summary["battery_mv"]
+        if summary.get("rssi") is not None:
+            fields["rssi"] = summary["rssi"]
+        fields["bidirectional"] = 1 if summary.get("bidirectional") else 0
+    db.update_covering(covering_id, **fields)
+
+
+@app.get("/blinds", response_class=HTMLResponse)
+def blinds_page(request: Request):
+    return render(request, "blinds.html")
+
+
+@app.get("/api/blinds")
+def api_blinds(request: Request):
+    """Everything the page needs in one round trip: rooms, coverings, hubs."""
+    return JSONResponse({
+        "rooms": [_room_dict(r) for r in db.rooms()],
+        "coverings": [_covering_dict(c) for c in db.coverings()],
+        "hubs": [_hub_dict(h) for h in db.shade_hubs()],
+        "layers": [{"value": v, "label": LAYER_LABELS[v]} for v in LAYERS],
+        "kinds": list(COVERING_KINDS),
+        "can_edit": _is_admin(request),
+    })
+
+
+# --- rooms -----------------------------------------------------------------
+
+@app.post("/api/blinds/rooms")
+async def api_add_room(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "A room name is required."}, status_code=400)
+    room_id = db.add_room(name)
+    return JSONResponse(_room_dict(db.room(room_id)))
+
+
+@app.patch("/api/blinds/rooms/{room_id}")
+async def api_update_room(room_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.room(room_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "A room name is required."}, status_code=400)
+    db.update_room(room_id, name=name)
+    return JSONResponse(_room_dict(db.room(room_id)))
+
+
+@app.delete("/api/blinds/rooms/{room_id}")
+def api_delete_room(room_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.room(room_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_room(room_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/blinds/rooms/order")
+async def api_room_order(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    order = payload.get("order")
+    if not isinstance(order, list):
+        return JSONResponse({"error": "order must be a list"}, status_code=400)
+    try:
+        db.set_room_order([int(r) for r in order])
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "order must be room ids"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+# --- hubs ------------------------------------------------------------------
+
+@app.post("/api/blinds/hubs/discover")
+async def api_discover_hubs(request: Request):
+    """Find bridges on the LAN. Read-only — this cannot move anything."""
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        found = await run_in_threadpool(shadelib.discover)
+    except shadelib.ShadeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    known = {h["id"] for h in db.shade_hubs()}
+    return JSONResponse({
+        "hubs": [{**h, "known": h["mac"] in known} for h in found]
+    })
+
+
+@app.post("/api/blinds/hubs")
+async def api_add_hub(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    host = (payload.get("host") or "").strip()
+    if not host:
+        return JSONResponse({"error": "A hub address is required."}, status_code=400)
+    try:
+        info = await run_in_threadpool(shadelib.device_list, host)
+    except shadelib.ShadeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    mac = info.get("mac")
+    if not mac:
+        return JSONResponse({"error": "that address did not answer as a hub"},
+                            status_code=502)
+    name = (payload.get("name") or "").strip() or "Shade hub"
+    api_key = (payload.get("api_key") or "").strip() or None
+    if db.shade_hub(mac):
+        db.update_shade_hub(mac, host=host, token=info.get("token"),
+                            protocol=info.get("protocol"), last_seen=time.time(),
+                            last_error=None,
+                            **({"api_key": api_key} if api_key else {}))
+    else:
+        db.add_shade_hub(id=mac, name=name, host=host, api_key=api_key,
+                         token=info.get("token"), protocol=info.get("protocol"),
+                         last_seen=time.time())
+    added = _sync_hub_coverings(mac, info)
+    return JSONResponse({"hub": _hub_dict(db.shade_hub(mac)), "added": added})
+
+
+def _sync_hub_coverings(hub_id: str, info: dict[str, Any]) -> list[str]:
+    """Create rows for motors we have not seen before. Never removes: a motor
+    that is out of radio range briefly vanishes from the hub's list, and losing
+    its name and room assignment over that would be maddening."""
+    added: list[str] = []
+    existing = {c["id"] for c in db.coverings(hub_id=hub_id)}
+    for index, device in enumerate(info.get("devices") or []):
+        mac = device.get("mac")
+        if not mac or mac in existing:
+            continue
+        db.add_covering(
+            id=mac, hub_id=hub_id, name=f"Covering {index + 1}",
+            device_type=device.get("deviceType") or "10000000",
+        )
+        added.append(mac)
+    return added
+
+
+@app.post("/api/blinds/hubs/{hub_id}/refresh")
+async def api_refresh_hub(hub_id: str, request: Request):
+    """Re-enumerate a hub and poll every motor behind it."""
+    if not _is_admin(request):
+        return _forbidden()
+    hub = db.shade_hub(hub_id)
+    if not hub:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        info = await run_in_threadpool(shadelib.device_list, hub["host"])
+    except shadelib.ShadeError as exc:
+        db.update_shade_hub(hub_id, last_error=str(exc), last_seen=time.time())
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    db.update_shade_hub(hub_id, token=info.get("token"),
+                        protocol=info.get("protocol"),
+                        last_seen=time.time(), last_error=None)
+    added = _sync_hub_coverings(hub_id, info)
+    polled = await run_in_threadpool(_poll_hub_coverings, hub_id, hub["host"])
+    return JSONResponse({"added": added, "polled": polled})
+
+
+def _poll_hub_coverings(hub_id: str, host: str) -> int:
+    """Read every covering on a hub. One unreachable motor must not stop the
+    rest, so failures are recorded per covering and the loop continues."""
+    polled = 0
+    for covering in db.coverings(hub_id=hub_id, enabled_only=True):
+        try:
+            data = shadelib.read_device(host, covering["id"], covering["device_type"])
+        except shadelib.ShadeError as exc:
+            _remember_covering(covering["id"], None, str(exc))
+            continue
+        _remember_covering(covering["id"], shadelib.summarise(data), None)
+        polled += 1
+    return polled
+
+
+@app.patch("/api/blinds/hubs/{hub_id}")
+async def api_update_hub(hub_id: str, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.shade_hub(hub_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields: dict[str, Any] = {}
+    if "name" in payload:
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return JSONResponse({"error": "A name is required."}, status_code=400)
+        fields["name"] = name
+    if "host" in payload:
+        host = (payload.get("host") or "").strip()
+        if not host:
+            return JSONResponse({"error": "An address is required."}, status_code=400)
+        fields["host"] = host
+    if "api_key" in payload:
+        key = (payload.get("api_key") or "").strip()
+        if key and len(key) != 16:
+            return JSONResponse(
+                {"error": "The key must be exactly 16 characters — keep the "
+                          "dashes, e.g. 12ab345c-d67e-8f"},
+                status_code=400,
+            )
+        fields["api_key"] = key or None
+    if "enabled" in payload:
+        fields["enabled"] = 1 if payload["enabled"] else 0
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_shade_hub(hub_id, **fields)
+    return JSONResponse(_hub_dict(db.shade_hub(hub_id)))
+
+
+@app.delete("/api/blinds/hubs/{hub_id}")
+def api_delete_hub(hub_id: str, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.shade_hub(hub_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_shade_hub(hub_id)
+    return JSONResponse({"ok": True})
+
+
+# --- coverings -------------------------------------------------------------
+
+@app.patch("/api/blinds/coverings/{covering_id}")
+async def api_update_covering(covering_id: str, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.covering(covering_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields: dict[str, Any] = {}
+    if "name" in payload:
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return JSONResponse({"error": "A name is required."}, status_code=400)
+        fields["name"] = name
+    if "layer" in payload:
+        if payload["layer"] not in LAYERS:
+            return JSONResponse(
+                {"error": f"layer must be one of {', '.join(LAYERS)}"},
+                status_code=400,
+            )
+        fields["layer"] = payload["layer"]
+    if "kind" in payload:
+        if payload["kind"] not in COVERING_KINDS:
+            return JSONResponse({"error": "unknown kind"}, status_code=400)
+        fields["kind"] = payload["kind"]
+    if "room_id" in payload:
+        room_id = payload["room_id"]
+        if room_id in (None, "", 0):
+            fields["room_id"] = None
+        else:
+            try:
+                room_id = int(room_id)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "room_id must be a number"},
+                                    status_code=400)
+            if not db.room(room_id):
+                return JSONResponse({"error": "unknown room"}, status_code=404)
+            fields["room_id"] = room_id
+    if "enabled" in payload:
+        fields["enabled"] = 1 if payload["enabled"] else 0
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_covering(covering_id, **fields)
+    return JSONResponse(_covering_dict(db.covering(covering_id)))
+
+
+@app.delete("/api/blinds/coverings/{covering_id}")
+def api_delete_covering(covering_id: str, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.covering(covering_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_covering(covering_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/blinds/coverings/order")
+async def api_covering_order(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    order = payload.get("order")
+    if not isinstance(order, list):
+        return JSONResponse({"error": "order must be a list"}, status_code=400)
+    db.set_covering_order([str(c) for c in order])
+    return JSONResponse({"ok": True})
+
+
+def _parse_command(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Read a move command. Either an action, or a position 0-100.
+
+    0 is fully open and 100 fully closed, matching the protocol rather than
+    intuition — the UI does the flipping so the wire format always agrees with
+    the vendor documentation.
+    """
+    if "position" in payload:
+        try:
+            position = int(payload["position"])
+        except (TypeError, ValueError):
+            return None, "position must be a number"
+        if not 0 <= position <= 100:
+            return None, "position must be 0-100"
+        return {"position": position}, None
+    action = (payload.get("action") or "").lower()
+    if action in ("open", "close", "stop"):
+        return {"action": action}, None
+    return None, "send an action of open, close or stop, or a position 0-100"
+
+
+def _run_command(covering: Any, hub: Any, command: dict[str, Any]) -> None:
+    key, token = hub["api_key"], hub["token"]
+    if "position" in command:
+        shadelib.set_position(
+            hub["host"], covering["id"], covering["device_type"],
+            command["position"], api_key=key, hub_token=token,
+        )
+    else:
+        shadelib.operate(
+            hub["host"], covering["id"], covering["device_type"],
+            command["action"], api_key=key, hub_token=token,
+        )
+
+
+@app.post("/api/blinds/coverings/{covering_id}/command")
+async def api_command_covering(covering_id: str, request: Request):
+    """Move one covering. Any signed-in user may do this."""
+    covering = db.covering(covering_id)
+    if not covering or not covering["enabled"]:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    hub = db.shade_hub(covering["hub_id"])
+    if not hub or not hub["enabled"]:
+        return JSONResponse({"error": "its hub is unavailable"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    command, error = _parse_command(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    try:
+        await run_in_threadpool(_run_command, covering, hub, command)
+    except shadelib.ShadeError as exc:
+        _remember_covering(covering_id, None, str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    # The motor takes several seconds to travel, so the position read back now
+    # would be the old one. Record the target and let the next poll correct it.
+    fields: dict[str, Any] = {"last_seen": time.time(), "last_error": None}
+    if "position" in command:
+        fields["last_position"] = command["position"]
+    elif command["action"] in ("open", "close"):
+        fields["last_position"] = 0 if command["action"] == "open" else 100
+    db.update_covering(covering_id, **fields)
+    return JSONResponse({"ok": True, **command})
+
+
+@app.post("/api/blinds/group/command")
+async def api_command_group(request: Request):
+    """Move a group: "close the blackouts in the bedroom", "open everything".
+
+    Body: {"room_id": int|null, "layer": "sheer"|"blackout"|null,
+           "action": ... | "position": ...}
+    A null room means every room; a null layer means both layers.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    command, error = _parse_command(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    layer = payload.get("layer")
+    if layer not in (None, "", *LAYERS):
+        return JSONResponse({"error": "unknown layer"}, status_code=400)
+    room_id = payload.get("room_id")
+    if room_id in (None, "", 0):
+        room_id = None
+    else:
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "room_id must be a number"}, status_code=400)
+        if not db.room(room_id):
+            return JSONResponse({"error": "unknown room"}, status_code=404)
+
+    targets = _select_coverings(room_id, layer or None)
+    if not targets:
+        return JSONResponse({"error": "nothing matches that group"}, status_code=404)
+    result = await run_in_threadpool(_run_group, targets, command)
+    return JSONResponse({"ok": True, **command, **result})
+
+
+def _select_coverings(room_id: int | None, layer: str | None) -> list[Any]:
+    rows = db.coverings(room_id=room_id, enabled_only=True) if room_id is not None \
+        else db.coverings(enabled_only=True)
+    if layer:
+        rows = [r for r in rows if r["layer"] == layer]
+    return rows
+
+
+def _run_group(targets: list[Any], command: dict[str, Any]) -> dict[str, Any]:
+    """Best effort across the group: one dead motor must not stop the others."""
+    moved, failed = [], []
+    hubs: dict[str, Any] = {}
+    for covering in targets:
+        hub = hubs.get(covering["hub_id"])
+        if hub is None:
+            hub = db.shade_hub(covering["hub_id"])
+            if hub is None:
+                continue
+            hubs[covering["hub_id"]] = hub
+        if not hub["enabled"]:
+            continue
+        try:
+            _run_command(covering, hub, command)
+        except shadelib.ShadeError as exc:
+            _remember_covering(covering["id"], None, str(exc))
+            failed.append({"id": covering["id"], "name": covering["name"],
+                           "error": str(exc)})
+            continue
+        fields: dict[str, Any] = {"last_seen": time.time(), "last_error": None}
+        if "position" in command:
+            fields["last_position"] = command["position"]
+        elif command["action"] in ("open", "close"):
+            fields["last_position"] = 0 if command["action"] == "open" else 100
+        db.update_covering(covering["id"], **fields)
+        moved.append(covering["id"])
+    return {"moved": moved, "failed": failed}
+
+
+@app.post("/api/blinds/coverings/{covering_id}/poll")
+async def api_poll_covering(covering_id: str, request: Request):
+    """Read live state for one covering."""
+    covering = db.covering(covering_id)
+    if not covering:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    hub = db.shade_hub(covering["hub_id"])
+    if not hub:
+        return JSONResponse({"error": "its hub is unavailable"}, status_code=404)
+    try:
+        data = await run_in_threadpool(
+            shadelib.read_device, hub["host"], covering_id, covering["device_type"]
+        )
+    except shadelib.ShadeError as exc:
+        _remember_covering(covering_id, None, str(exc))
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    summary = shadelib.summarise(data)
+    _remember_covering(covering_id, summary, None)
+    return JSONResponse({"ok": True, **summary,
+                         "covering": _covering_dict(db.covering(covering_id))})
+
+
+# --- covering schedules ----------------------------------------------------
+
+@app.get("/api/blinds/schedules")
+def api_covering_schedules(request: Request):
+    return JSONResponse([_covering_schedule_dict(s) for s in db.covering_schedules()])
+
+
+def _covering_schedule_dict(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "covering_id": row["covering_id"],
+        "room_id": row["covering_room_id"],
+        "layer": row["covering_layer"],
+        "days": row["days"],
+        "start_min": row["start_min"],
+        "end_min": row["end_min"],
+        "value": row["value"],
+        "enabled": bool(row["enabled"]),
+    }
+
+
+@app.post("/api/blinds/schedules")
+async def api_add_covering_schedule(request: Request):
+    """A covering schedule moves its targets to a position when the window opens.
+
+    Deliberately a one-shot on the rising edge, not an authoritative hold: a
+    shade you raised by hand at noon should stay up, not be dragged back every
+    thirty seconds until the window closes. "Open at 07:00, close at sunset" is
+    two rules, which is also how a person describes it.
+    """
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    window, error = _parse_window(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    days, start_min, end_min = window
+    try:
+        position = int(payload.get("position"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "position must be a number"}, status_code=400)
+    if not 0 <= position <= 100:
+        return JSONResponse({"error": "position must be 0-100"}, status_code=400)
+
+    covering_id = payload.get("covering_id") or None
+    room_id = payload.get("room_id")
+    layer = payload.get("layer") or None
+    if covering_id:
+        if not db.covering(covering_id):
+            return JSONResponse({"error": "unknown covering"}, status_code=404)
+        room_id, layer = None, None
+    else:
+        if room_id in (None, "", 0):
+            room_id = None
+        else:
+            try:
+                room_id = int(room_id)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "room_id must be a number"},
+                                    status_code=400)
+            if not db.room(room_id):
+                return JSONResponse({"error": "unknown room"}, status_code=404)
+        if layer is not None and layer not in LAYERS:
+            return JSONResponse({"error": "unknown layer"}, status_code=400)
+
+    sid = db.add_schedule(
+        covering_id=covering_id, covering_room_id=room_id, covering_layer=layer,
+        action="cover", days=days, start_min=start_min, end_min=end_min,
+        value=str(position),
+    )
+    return JSONResponse(_covering_schedule_dict(
+        db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    ))
+
+
+@app.patch("/api/blinds/schedules/{sid}")
+async def api_update_covering_schedule(sid: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["action"] != "cover":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    if "enabled" not in payload:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.set_schedule_enabled(sid, bool(payload["enabled"]))
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/blinds/schedules/{sid}")
+def api_delete_covering_schedule(sid: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    row = db.one("SELECT * FROM schedules WHERE id = ?", (sid,))
+    if not row or row["action"] != "cover":
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_schedule(sid)
+    return JSONResponse({"ok": True})
+
+
+@app.api_route("/api/hook/blinds/group", methods=["GET", "POST"])
+async def api_hook_blinds(request: Request):
+    """Token-authed group control, for a scene switch or a phone shortcut:
+        /api/hook/blinds/group?token=<t>&layer=blackout&room_id=3&position=100
+    """
+    token = request.query_params.get("token") or request.headers.get("X-Sentry-Token")
+    if not token or not secrets.compare_digest(str(token), _automation_token()):
+        return JSONResponse({"error": "bad token"}, status_code=403)
+    params = dict(request.query_params)
+    command, error = _parse_command(params)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    layer = params.get("layer") or None
+    if layer is not None and layer not in LAYERS:
+        return JSONResponse({"error": "unknown layer"}, status_code=400)
+    room_id = params.get("room_id")
+    if room_id in (None, "", "0"):
+        room_id = None
+    else:
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "room_id must be a number"}, status_code=400)
+    targets = _select_coverings(room_id, layer)
+    if not targets:
+        return JSONResponse({"error": "nothing matches that group"}, status_code=404)
+    result = await run_in_threadpool(_run_group, targets, command)
+    return JSONResponse({"ok": True, **command, **result})
 
 
 @app.get("/api/automation/token")

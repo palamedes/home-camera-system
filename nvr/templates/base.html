@@ -26,8 +26,10 @@
   {% set path = request.url.path %}
   <nav>
     <a href="/" class="{{ 'active' if path == '/' }}">Dashboard</a>
-    <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') }}">Cameras</a>
-    <a href="/clips" class="{{ 'active' if path.startswith('/clips') }}">Clips</a>
+    {# Clips lives as a button on the Cameras page, like Wall view — so the
+       nav stays one row per top-level area rather than per page. #}
+    <a href="/cameras" class="{{ 'active' if path.startswith('/cameras') or path.startswith('/clips') }}">Cameras</a>
+    <a href="/blinds" class="{{ 'active' if path.startswith('/blinds') }}">Blinds</a>
     <a href="/calendar" class="{{ 'active' if path.startswith('/calendar') }}">Calendar</a>
     {% if is_admin %}
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') or path.startswith('/discover') }}">Settings</a>

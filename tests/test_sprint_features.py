@@ -205,3 +205,29 @@ def test_recorder_honours_a_mounted_pin(app_module, db):
     vol = app_module.cfg.storage.volumes[0]
     camera = {"id": "front", "preferred_volume": str(vol.path)}
     assert svc._volume_for(camera, None) == vol.path
+
+
+# --- navigation: Clips moved from a nav tab to a button on Cameras ----------
+
+def test_clips_is_reachable_from_the_cameras_page(admin_client, db):
+    from conftest import add_camera
+    add_camera(db)
+    body = admin_client.get("/cameras").text
+    assert 'href="/clips"' in body
+
+
+def test_clips_stays_reachable_with_no_cameras(admin_client):
+    """Saved clips outlive the cameras they came from, so the button must not
+    be conditional on having any."""
+    assert 'href="/clips"' in admin_client.get("/cameras").text
+
+
+def test_the_clips_page_offers_a_way_back(admin_client):
+    """It no longer has a nav tab, so without this it is a dead end."""
+    assert 'href="/cameras"' in admin_client.get("/clips").text
+
+
+def test_the_cameras_tab_highlights_while_on_clips(admin_client):
+    """Clips sits under Cameras in the nav; the tab should not go dark."""
+    body = admin_client.get("/clips").text
+    assert 'href="/cameras" class="active"' in body

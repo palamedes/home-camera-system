@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Blinds — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Blinds</h1>
+    <p class="muted small">Motorised window coverings, by room.</p>
+  </div>
+  <div class="row" style="flex: 0 0 auto; gap: 8px; align-items: center;">
+    <button class="btn btn-sm" id="blinds-refresh">Refresh</button>
+    {% if is_admin %}
+    <button class="btn btn-sm" id="blinds-add-room">Add room</button>
+    <button class="btn btn-sm btn-primary" id="blinds-add-hub">Add hub</button>
+    {% endif %}
+  </div>
+</div>
+
+<div id="blinds-alert"></div>
+
+<div class="panel blinds-allbar" id="blinds-allbar" hidden>
+  <div class="panel-pad">
+    <div class="blinds-allbar-head">
+      <h2>Whole house</h2>
+      <span class="muted small">Every covering, in every room</span>
+    </div>
+    <div id="blinds-allbar-groups"></div>
+  </div>
+</div>
+
+<div id="blinds-rooms"></div>
+
+<details class="panel blinds-help">
+  <summary>
+    <span class="blinds-help-text">
+      <span>Setting a shade's upper and lower stop limits</span>
+      <span class="muted small">The remote does this, not Sentry — open when a shade stops in the wrong place</span>
+    </span>
+  </summary>
+  <div class="panel-pad blinds-help-body">
+    <p class="muted small">
+      Every motor stores its own upper and lower stop limit, in the motor itself.
+      Sentry's 0–100% scale is relative to those limits, per shade: <strong>0% is
+      that shade's upper limit and 100% is its lower limit</strong>. That is why one
+      command moves them all correctly despite different window ledges — the
+      calibration lives in each motor, so Sentry never needs a per-shade offset.
+    </p>
+
+    <h3>Before you start</h3>
+    <ul>
+      <li>On a multi-channel remote, <strong>select that shade's channel first</strong>.
+        Channel&nbsp;0 is the group channel and would retune everything.</li>
+      <li>In program mode the shade only creeps. Hold UP or DOWN to make it
+        travel continuously.</li>
+      <li>A "jog" is a quick little up-and-down twitch. It is the motor
+        acknowledging you — if you never see one, nothing after that will work.</li>
+    </ul>
+
+    <h3>Lower limit — the ledge case</h3>
+    <ol>
+      <li>Press <strong>DOWN</strong>. The shade runs to its current lower limit.</li>
+      <li>Press and hold <strong>DOWN + STOP</strong> together until it jogs once,
+        then beeps twice. You are now in program mode.</li>
+      <li>Move the shade to where you actually want it to stop.</li>
+      <li>Press and hold <strong>DOWN + STOP</strong> again until it jogs twice and
+        beeps once. Saved.</li>
+    </ol>
+
+    <h3>Upper limit</h3>
+    <ol>
+      <li>Press <strong>UP</strong> to run to the current upper limit.</li>
+      <li>Press and hold <strong>UP + STOP</strong> until it jogs once, then beeps twice.</li>
+      <li>Move the shade to the desired top.</li>
+      <li>Press and hold <strong>UP + STOP</strong> until it jogs twice and beeps once.</li>
+    </ol>
+
+    <h3>Middle stop limit</h3>
+    <p class="muted small">
+      A third preset. Move the shade where you want it, then press and hold
+      <strong>STOP</strong> for 5 seconds until it jogs once and beeps once.
+      Afterwards, pressing STOP while the shade is <em>not</em> moving sends it
+      to that middle position. Both the upper and lower limits must be set first.
+    </p>
+
+    <h3>Pairing a new shade to the hub</h3>
+    <p class="muted small">
+      P2 is a recessed button on the <strong>back of the remote, under the battery
+      cover, on the left</strong>. Slide the cover off, select the shade's channel,
+      then in the vendor app choose Add Device → Radio Motor → your hub → By
+      Remote, press <strong>P2 twice</strong> (shade jogs twice), then Next (shade
+      jogs three times). Pairing is the most range-sensitive thing these do — if
+      it fails, move the hub closer before anything else.
+    </p>
+
+    <h3>Do not do this by accident</h3>
+    <p class="muted small">
+      Holding the setting button on the <em>motor head</em> until the shade jogs
+      four times and beeps three times is a <strong>full reset</strong>. It wipes
+      both stop limits, and Sentry's percentages become meaningless until you
+      re-set them — upper first, then lower.
+    </p>
+  </div>
+</details>
+
+<div class="modal-backdrop" id="blinds-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="blinds-modal-title">
+    <div class="modal-head">
+      <h2 id="blinds-modal-title">Add hub</h2>
+      <button class="modal-close" id="blinds-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="blinds-modal-body"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('blinds.js') }}"></script>
+<script>initBlinds();</script>
+{% endblock %}
