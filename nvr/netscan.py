@@ -47,6 +47,75 @@ OUI_PATHS = (
 # should be listening — the point is only to make the kernel do the ARP.
 PROBE_PORT = 9
 
+# What a thing on the network can be. Grouped the way somebody standing in the
+# house thinks about it, not the way a network engineer does.
+#
+# Icons are emoji rather than an icon font or an SVG sprite: this project ships
+# no external assets and no JS dependencies, and a glyph that renders everywhere
+# without a download is worth more here than a prettier set that needs one.
+DEVICE_KINDS: tuple[tuple[str, str, str], ...] = (
+    # value, label, icon
+    ("unknown", "Unidentified", "❓"),
+    # Computers and handhelds
+    ("desktop", "Desktop", "🖥️"),
+    ("laptop", "Laptop", "💻"),
+    ("smartphone", "Phone", "📱"),
+    ("tablet", "Tablet", "📲"),
+    ("wearable", "Wearable", "⌚"),
+    ("server", "Server", "🗄️"),
+    # Network gear
+    ("router", "Router", "📶"),
+    ("extender", "Mesh node / extender", "📡"),
+    ("network", "Network gear", "🌐"),
+    ("nas", "NAS / storage", "💾"),
+    ("printer", "Printer", "🖨️"),
+    ("ip_phone", "IP phone", "☎️"),
+    # Entertainment
+    ("tv", "TV", "📺"),
+    ("media", "Media streamer", "🎬"),
+    ("speaker", "Smart speaker", "🔊"),
+    ("gaming", "Games console", "🎮"),
+    ("frame", "Digital frame", "🖼️"),
+    # Security — the things this house already cares about
+    ("camera", "Camera", "📹"),
+    ("doorbell", "Doorbell", "🔔"),
+    ("lock", "Smart lock", "🔒"),
+    ("sensor", "Sensor", "🛰️"),
+    ("alarm", "Alarm / security", "🛡️"),
+    # Home control
+    ("thermostat", "Thermostat", "🌡️"),
+    ("light", "Light", "💡"),
+    ("plug", "Smart plug / relay", "🔌"),
+    ("blinds", "Blinds / shades", "🪟"),
+    ("garage", "Garage door", "🚪"),
+    ("irrigation", "Irrigation", "💧"),
+    ("hub", "Hub / bridge", "🧩"),
+    ("iot", "Other smart device", "📟"),
+    # Appliances
+    ("fridge", "Fridge", "🧊"),
+    ("dishwasher", "Dishwasher", "🍽️"),
+    ("oven", "Oven / stove", "🍳"),
+    ("microwave", "Microwave", "🍲"),
+    ("washer", "Washing machine", "🧺"),
+    ("dryer", "Dryer", "🌀"),
+    ("vacuum", "Robot vacuum", "🧹"),
+    ("water_heater", "Water heater", "🚿"),
+    ("hvac", "HVAC / air handler", "❄️"),
+    ("appliance", "Other appliance", "🔧"),
+    # Outdoors / marine, since there is a boat and a dock
+    ("boat", "Boat / marine", "⛵"),
+    ("vehicle", "Vehicle / charger", "🚗"),
+    ("solar", "Solar / battery", "🔋"),
+    ("weather", "Weather station", "🌦️"),
+)
+
+KIND_VALUES = frozenset(value for value, _label, _icon in DEVICE_KINDS)
+KIND_ICONS = {value: icon for value, _label, icon in DEVICE_KINDS}
+
+
+def kind_choices() -> list[dict[str, str]]:
+    return [{"value": v, "label": l, "icon": i} for v, l, i in DEVICE_KINDS]
+
 _MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
 

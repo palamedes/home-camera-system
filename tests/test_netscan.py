@@ -293,3 +293,152 @@ def test_a_hub_with_no_known_mac_is_not_hunted_for(
     assert admin_client.post("/api/blinds/hubs/hub1/refresh").status_code == 502
     assert not hunted
     assert db.shade_hub("hub1")["host"] == "192.168.1.25"
+
+
+# --- saying what a device is -----------------------------------------------
+
+def test_a_label_is_stored_against_the_mac(admin_client, db):
+    r = admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5", json={
+        "label": "Kitchen dishwasher", "kind": "dishwasher",
+        "notes": "under the counter", "address": "192.168.1.10",
+    })
+    assert r.status_code == 200
+    assert r.json()["icon"] == "🍽️"
+    entry = db.lan_device("fc:b9:7e:5f:fd:b5")
+    assert entry["label"] == "Kitchen dishwasher"
+    assert entry["kind"] == "dishwasher"
+
+
+def test_a_label_survives_the_device_changing_address(
+        admin_client, db, monkeypatch, app_module):
+    """The entire reason labels are keyed by MAC and not by address."""
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"label": "Kitchen dishwasher", "kind": "dishwasher",
+                             "address": "192.168.1.10"})
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.77": "fc:b9:7e:5f:fd:b5"})
+    body = admin_client.post("/api/network/scan").json()
+    moved = body["devices"][0]
+    assert moved["address"] == "192.168.1.77"
+    assert moved["display"] == "Kitchen dishwasher"
+
+
+def test_a_persons_label_beats_the_vendor_guess(
+        admin_client, monkeypatch, app_module):
+    """"GE Appliances" is a guess; only a person knows which appliance."""
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    before = admin_client.post("/api/network/scan").json()["devices"][0]
+    assert before["display"] == before["vendor"]
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"label": "Kitchen dishwasher"})
+    after = admin_client.post("/api/network/scan").json()["devices"][0]
+    assert after["display"] == "Kitchen dishwasher"
+
+
+def test_the_mac_is_normalised_before_storing(admin_client, db):
+    """So FC-B9-7E... and fc:b9:7e... are the same device, not two."""
+    admin_client.patch("/api/network/devices/FC-B9-7E-5F-FD-B5",
+                       json={"label": "Stove"})
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"notes": "double oven"})
+    assert len(db.lan_devices()) == 1
+    entry = db.lan_device("fc:b9:7e:5f:fd:b5")
+    assert entry["label"] == "Stove" and entry["notes"] == "double oven"
+
+
+def test_an_unknown_kind_is_refused(admin_client):
+    r = admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                           json={"kind": "teleporter"})
+    assert r.status_code == 400
+
+
+def test_a_bad_mac_is_refused(admin_client):
+    assert admin_client.patch("/api/network/devices/not-a-mac",
+                              json={"label": "x"}).status_code == 400
+
+
+def test_labelling_something_switched_off_still_works(admin_client, db):
+    """A device can be unplugged when you happen to be labelling things."""
+    r = admin_client.patch("/api/network/devices/fc:b9:7e:4d:41:a2",
+                           json={"label": "Stove", "kind": "oven"})
+    assert r.status_code == 200
+    assert db.lan_device("fc:b9:7e:4d:41:a2")["label"] == "Stove"
+
+
+def test_identifying_a_device_removes_it_from_the_unknown_count(
+        admin_client, monkeypatch, app_module):
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    assert admin_client.post("/api/network/scan").json()["unknown"] == 1
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"kind": "dishwasher"})
+    assert admin_client.post("/api/network/scan").json()["unknown"] == 0
+
+
+def test_dismissing_clears_it_without_naming_it(
+        admin_client, monkeypatch, app_module):
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"dismissed": True})
+    assert admin_client.post("/api/network/scan").json()["unknown"] == 0
+
+
+def test_first_seen_is_not_moved_by_later_sightings(
+        admin_client, db, monkeypatch, app_module):
+    """A genuinely new arrival should read as new; if first_seen kept being
+    refreshed, nothing would ever look new."""
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.post("/api/network/scan")
+    first = db.lan_device("fc:b9:7e:5f:fd:b5")["first_seen"]
+    admin_client.post("/api/network/scan")
+    entry = db.lan_device("fc:b9:7e:5f:fd:b5")
+    assert entry["first_seen"] == first
+    assert entry["last_seen"] >= first
+
+
+def test_the_known_list_is_available_without_scanning(
+        admin_client, monkeypatch, app_module):
+    """So the page shows something immediately instead of a blank panel and a
+    thirty-second wait."""
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.post("/api/network/scan")
+    swept = []
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: swept.append(1) or {})
+    body = admin_client.get("/api/network/devices").json()
+    assert not swept
+    assert [d["mac"] for d in body["devices"]] == ["fc:b9:7e:5f:fd:b5"]
+    assert body["stale"] is True
+
+
+def test_forgetting_a_device(admin_client, db):
+    admin_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                       json={"label": "Old thing"})
+    assert admin_client.delete(
+        "/api/network/devices/fc:b9:7e:5f:fd:b5").status_code == 200
+    assert db.lan_devices() == []
+
+
+def test_annotation_is_admin_only(viewer_client):
+    assert viewer_client.patch("/api/network/devices/fc:b9:7e:5f:fd:b5",
+                               json={"label": "x"}).status_code == 403
+    assert viewer_client.get("/api/network/devices").status_code == 403
+
+
+def test_the_kind_catalogue_covers_the_appliances(admin_client):
+    values = {k["value"] for k in
+              admin_client.get("/api/network/devices").json()["kinds"]}
+    for expected in ("dishwasher", "oven", "microwave", "fridge", "washer",
+                     "vacuum", "thermostat", "camera", "blinds", "plug"):
+        assert expected in values, expected
+
+
+def test_every_kind_has_an_icon():
+    from nvr import netscan as ns
+    for value, label, icon in ns.DEVICE_KINDS:
+        assert value and label and icon, value
+    assert len(ns.KIND_VALUES) == len(ns.DEVICE_KINDS), "duplicate kind value"

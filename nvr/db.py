@@ -331,6 +331,28 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks(list_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_utc);
 
+-- What is on the LAN, as annotated by a person. Keyed by MAC because that is
+-- the stable identity: an address changes with the DHCP lease, and the whole
+-- point is that "this is the dishwasher" survives that.
+--
+-- Rows are created by the network scan and outlive it, so a device that is
+-- switched off keeps its label — and first_seen means a genuinely new arrival
+-- on the network is visible as new, which is worth knowing in a house that
+-- runs a security system.
+CREATE TABLE IF NOT EXISTS lan_devices (
+    mac          TEXT    PRIMARY KEY,
+    label        TEXT,
+    -- One of nvr.netscan.DEVICE_KINDS; 'unknown' until somebody says.
+    kind         TEXT    NOT NULL DEFAULT 'unknown',
+    notes        TEXT,
+    last_address TEXT,
+    first_seen   REAL,
+    last_seen    REAL,
+    -- Ignore this one in the "unidentified" count without labelling it.
+    dismissed    INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL
+);
+
 -- Automations: bind something happening to something being done. Sentry knows
 -- things nothing else on the LAN knows; this is how it acts on them without a
 -- separate home-automation stack.
@@ -1013,6 +1035,40 @@ class Database:
         return self.query(
             "SELECT * FROM schedules WHERE action = 'cover' ORDER BY start_min"
         )
+
+    # ---- LAN devices (the annotated network inventory) --------------------
+
+    def lan_devices(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM lan_devices ORDER BY last_seen DESC")
+
+    def lan_device(self, mac: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM lan_devices WHERE mac = ?", (mac,))
+
+    def seen_lan_device(self, mac: str, address: str, when: float) -> None:
+        """Record a sighting, creating the row on first contact.
+
+        first_seen is set once and never updated, so a device that appears on
+        the network for the first time can be shown as new.
+        """
+        self.execute(
+            "INSERT INTO lan_devices (mac, last_address, first_seen, last_seen, "
+            "created_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(mac) DO UPDATE SET last_address = excluded.last_address, "
+            "last_seen = excluded.last_seen",
+            (mac, address, when, when, int(when)),
+        )
+
+    def update_lan_device(self, mac: str, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE lan_devices SET {assigns} WHERE mac = ?",
+            (*fields.values(), mac),
+        )
+
+    def forget_lan_device(self, mac: str) -> None:
+        self.execute("DELETE FROM lan_devices WHERE mac = ?", (mac,))
 
     # ---- automations -----------------------------------------------------
 

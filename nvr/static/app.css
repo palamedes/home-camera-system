@@ -1445,3 +1445,12 @@ a.title:hover { color: var(--accent); }
 }
 .auto-action .field:last-child { margin-bottom: 0; }
 .modal-body .auto-action .btn { width: auto; }
+
+/* ---- network inventory ---- */
+
+.net-row { gap: 12px; }
+.net-icon { font-size: 20px; line-height: 1; flex: none; width: 26px; text-align: center; }
+.net-row-open { cursor: pointer; }
+.net-row-open:hover { background: var(--panel-2); }
+.net-row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.net-notes { overflow-wrap: anywhere; }

@@ -5,24 +5,41 @@
 <div class="page-head">
   <div>
     <h1>Network</h1>
-    <p class="muted small">Everything answering on the LAN, and what Sentry knows about it.</p>
+    <p class="muted small" id="net-summary">Everything answering on the LAN, and what it is.</p>
   </div>
-  <div class="row" style="flex: 0 0 auto;">
+  <div class="row" style="flex: 0 0 auto; gap: 8px; align-items: center;">
+    <select id="net-filter" style="flex: 0 0 auto; width: auto;">
+      <option value="all">Everything</option>
+      <option value="iot">Hide phones and laptops</option>
+      <option value="unidentified">Only unidentified</option>
+    </select>
     <button class="btn btn-sm btn-primary" id="net-scan">Scan the network</button>
   </div>
 </div>
 
 <div id="net-alert"></div>
 <div class="panel"><div id="net-table" class="blinds-list">
-  <div class="list-item muted small">Press “Scan the network” to look.</div>
+  <div class="list-item muted small">Loading…</div>
 </div></div>
 
 <p class="muted small" style="margin-top: 14px; max-width: 70ch;">
-  Manufacturer names come from the IEEE registry that ships with the operating
-  system — nothing is sent anywhere to identify them. Addresses marked
+  Click any device to say what it is. Labels are stored against the hardware
+  address, so they survive the device being given a different IP. Manufacturer
+  names come from the IEEE registry that ships with the operating system —
+  nothing is sent anywhere to identify them. Addresses marked
   <em>randomised</em> are phones and laptops, which rotate their hardware
-  address per network and are not worth tracking.
+  address per network.
 </p>
+
+<div class="modal-backdrop" id="net-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="net-modal-title">
+    <div class="modal-head">
+      <h2 id="net-modal-title">Device</h2>
+      <button class="modal-close" id="net-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="net-modal-body"></div>
+  </div>
+</div>
 
 {% endblock %}
 {% block scripts %}

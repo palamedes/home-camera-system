@@ -3081,19 +3081,137 @@ def _known_macs() -> dict[str, dict[str, Any]]:
     return known
 
 
+def _annotate(rows: list[dict[str, Any]], *, record: bool) -> list[dict[str, Any]]:
+    """Merge what a person said about each device onto what the scan found.
+
+    A person's label always wins over the vendor guess: "Kitchen dishwasher"
+    is more use than "GE Appliances", and only they know which is which.
+    """
+    now = time.time()
+    if record:
+        for row in rows:
+            db.seen_lan_device(row["mac"], row["address"], now)
+    saved = {d["mac"]: d for d in db.lan_devices()}
+    out = []
+    for row in rows:
+        entry = saved.get(row["mac"])
+        kind = (entry["kind"] if entry else None) or "unknown"
+        label = (entry["label"] if entry else None) or None
+        out.append({
+            **row,
+            "label": label,
+            "kind": kind,
+            "icon": netscan.KIND_ICONS.get(kind, "❓"),
+            "notes": entry["notes"] if entry else None,
+            "dismissed": bool(entry["dismissed"]) if entry else False,
+            "first_seen": entry["first_seen"] if entry else None,
+            "last_seen": entry["last_seen"] if entry else None,
+            # Best name available, in order of how much a human meant it.
+            "display": label or row["known_name"] or row["vendor"] or "Unknown device",
+        })
+    return out
+
+
+def _is_identified(row: dict[str, Any]) -> bool:
+    return bool(row["label"] or row["known_kind"] or row["kind"] != "unknown"
+                or row["dismissed"] or row["randomised"])
+
+
 @app.post("/api/network/scan")
 async def api_network_scan(request: Request):
     """Sweep the LAN and name what answers. Read-only, and the vendor lookup is
     offline — the house's MAC addresses are not sent anywhere."""
     if not _is_admin(request):
         return _forbidden()
-    rows = await run_in_threadpool(netscan.inventory, _known_macs())
+    found = await run_in_threadpool(netscan.inventory, _known_macs())
+    rows = _annotate(found, record=True)
     return JSONResponse({
         "devices": rows,
+        "kinds": netscan.kind_choices(),
         "network": str(netscan.local_network() or ""),
-        "unknown": sum(1 for r in rows
-                       if not r["known_kind"] and not r["randomised"]),
+        "unknown": sum(1 for r in rows if not _is_identified(r)),
     })
+
+
+@app.get("/api/network/devices")
+def api_network_devices(request: Request):
+    """What is known without scanning, so the page has something to show
+    immediately instead of a blank panel and a thirty-second wait."""
+    if not _is_admin(request):
+        return _forbidden()
+    known = _known_macs()
+    rows = []
+    for entry in db.lan_devices():
+        rows.append({
+            "address": entry["last_address"],
+            "mac": entry["mac"],
+            "vendor": netscan.vendor_for(entry["mac"]),
+            "randomised": netscan.is_randomised(entry["mac"]),
+            "known_kind": (known.get(entry["mac"]) or {}).get("kind"),
+            "known_name": (known.get(entry["mac"]) or {}).get("name"),
+        })
+    rows = _annotate(rows, record=False)
+    return JSONResponse({
+        "devices": rows,
+        "kinds": netscan.kind_choices(),
+        "network": str(netscan.local_network() or ""),
+        "unknown": sum(1 for r in rows if not _is_identified(r)),
+        "stale": True,
+    })
+
+
+@app.patch("/api/network/devices/{mac}")
+async def api_update_network_device(mac: str, request: Request):
+    """Say what something is. Keyed by MAC so the label survives a lease
+    change — which is the entire reason for not keying it by address."""
+    if not _is_admin(request):
+        return _forbidden()
+    normalised = netscan.normalise_mac(mac)
+    if not normalised:
+        return JSONResponse({"error": "not a MAC address"}, status_code=400)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+
+    fields: dict[str, Any] = {}
+    if "label" in payload:
+        fields["label"] = (payload.get("label") or "").strip() or None
+    if "kind" in payload:
+        kind = payload.get("kind") or "unknown"
+        if kind not in netscan.KIND_VALUES:
+            return JSONResponse({"error": "unknown device kind"}, status_code=400)
+        fields["kind"] = kind
+    if "notes" in payload:
+        fields["notes"] = (payload.get("notes") or "").strip() or None
+    if "dismissed" in payload:
+        fields["dismissed"] = 1 if payload["dismissed"] else 0
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+
+    if db.lan_device(normalised) is None:
+        # Annotating something that has not been scanned yet is legitimate —
+        # a device can be switched off when you happen to be labelling things.
+        db.seen_lan_device(normalised, payload.get("address") or "", time.time())
+    db.update_lan_device(normalised, **fields)
+    entry = db.lan_device(normalised)
+    return JSONResponse({
+        "mac": entry["mac"], "label": entry["label"], "kind": entry["kind"],
+        "icon": netscan.KIND_ICONS.get(entry["kind"], "❓"),
+        "notes": entry["notes"], "dismissed": bool(entry["dismissed"]),
+    })
+
+
+@app.delete("/api/network/devices/{mac}")
+def api_forget_network_device(mac: str, request: Request):
+    """Forget a device entirely — for something that has left the house."""
+    if not _is_admin(request):
+        return _forbidden()
+    normalised = netscan.normalise_mac(mac)
+    if not normalised or db.lan_device(normalised) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.forget_lan_device(normalised)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/automations")
