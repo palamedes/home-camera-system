@@ -510,6 +510,15 @@ class Database:
             if sched_cols and column not in sched_cols:
                 self.execute(statement)
 
+        # The MAC is the stable identity; the address is just where it was
+        # last seen. Learned on first successful contact, and used to re-find a
+        # device after a DHCP lease change — which otherwise breaks the
+        # integration silently, with "it stopped working" as the only symptom.
+        for table in ("devices", "shade_hubs", "cameras"):
+            cols = {row["name"] for row in self.query(f"PRAGMA table_info({table})")}
+            if cols and "mac" not in cols:
+                self.execute(f"ALTER TABLE {table} ADD COLUMN mac TEXT")
+
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
         if "role" not in user_cols:
             # Existing accounts predate roles; they were the sole operator, so

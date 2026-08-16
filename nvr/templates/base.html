@@ -34,6 +34,7 @@
     <a href="/calendar" class="{{ 'active' if path.startswith('/calendar') }}">Calendar</a>
     {% if is_admin %}
     <a href="/automations" class="{{ 'active' if path.startswith('/automations') }}">Automations</a>
+    <a href="/network" class="{{ 'active' if path.startswith('/network') }}">Network</a>
     <a href="/settings" class="{{ 'active' if path.startswith('/settings') or path.startswith('/discover') }}">Settings</a>
     {% endif %}
   </nav>

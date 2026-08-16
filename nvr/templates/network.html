@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Network — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Network</h1>
+    <p class="muted small">Everything answering on the LAN, and what Sentry knows about it.</p>
+  </div>
+  <div class="row" style="flex: 0 0 auto;">
+    <button class="btn btn-sm btn-primary" id="net-scan">Scan the network</button>
+  </div>
+</div>
+
+<div id="net-alert"></div>
+<div class="panel"><div id="net-table" class="blinds-list">
+  <div class="list-item muted small">Press “Scan the network” to look.</div>
+</div></div>
+
+<p class="muted small" style="margin-top: 14px; max-width: 70ch;">
+  Manufacturer names come from the IEEE registry that ships with the operating
+  system — nothing is sent anywhere to identify them. Addresses marked
+  <em>randomised</em> are phones and laptops, which rotate their hardware
+  address per network and are not worth tracking.
+</p>
+
+{% endblock %}
+{% block scripts %}
+<script src="{{ asset('network.js') }}"></script>
+<script>initNetwork();</script>
+{% endblock %}

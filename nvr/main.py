@@ -27,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (
     appsettings, auth, camera_control, config as config_module, devices as devicelib,
-    discovery, playback, proxy, shades as shadelib, streamprobe, streams,
+    discovery, netscan, playback, proxy, shades as shadelib, streamprobe, streams,
 )
 from .db import Database
 from .alerts import AlertService
@@ -1845,9 +1845,20 @@ async def api_set_device_state(device_id: str, request: Request):
     try:
         result = await run_in_threadpool(_apply_device_state, device, state)
     except devicelib.DeviceError as exc:
-        _remember(device_id, None, str(exc))
-        return JSONResponse({"error": str(exc)}, status_code=502)
+        moved = await run_in_threadpool(_rehome, "devices", device)
+        if moved is None:
+            _remember(device_id, None, str(exc))
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        try:
+            result = await run_in_threadpool(
+                _apply_device_state, db.device(device_id), state
+            )
+        except devicelib.DeviceError as exc2:
+            _remember(device_id, None, str(exc2))
+            return JSONResponse({"error": str(exc2)}, status_code=502)
     _remember(device_id, result, None)
+    await run_in_threadpool(_learn_mac, "devices", device_id, device["host"],
+                            device["mac"] if "mac" in device.keys() else None)
     return JSONResponse({"ok": True, "state": result})
 
 
@@ -2215,6 +2226,44 @@ def _hub_dict(row: Any) -> dict[str, Any]:
     return data
 
 
+def _learn_mac(table: str, row_id: str, host: str, current: Any) -> None:
+    """Record what MAC answered at this address, the first time we reach it.
+
+    Cheap, and it is the whole basis of recovering from a lease change later:
+    without it there is nothing stable to search for.
+    """
+    if current:
+        return
+    mac = netscan.mac_for(host)
+    if not mac:
+        return
+    if table == "devices":
+        db.update_device(row_id, mac=mac)
+    elif table == "shade_hubs":
+        db.update_shade_hub(row_id, mac=mac)
+    log.info("learned %s for %s %s", mac, table, row_id)
+
+
+def _rehome(table: str, row: Any, reachable: Any = None) -> str | None:
+    """A stored address stopped answering: find where the device went.
+
+    Only ever accepts an exact MAC match. Guessing — by hostname, or by "the
+    only other thing answering that protocol" — would mean commanding somebody
+    else's hardware, which is far worse than staying broken until a human looks.
+    """
+    mac = row["mac"] if "mac" in row.keys() else None
+    if not mac:
+        return None
+    address, moved = netscan.resolve_moved(row["host"], mac, reachable)
+    if not moved or not address:
+        return None
+    if table == "devices":
+        db.update_device(row["id"], host=address)
+    elif table == "shade_hubs":
+        db.update_shade_hub(row["id"], host=address)
+    return address
+
+
 def _remember_covering(covering_id: str, summary: dict[str, Any] | None,
                        error: str | None) -> None:
     fields: dict[str, Any] = {"last_seen": time.time(), "last_error": error}
@@ -2358,6 +2407,8 @@ async def api_add_hub(request: Request):
                          token=info.get("token"), protocol=info.get("protocol"),
                          last_seen=time.time())
     added = _sync_hub_coverings(mac, info)
+    await run_in_threadpool(_learn_mac, "shade_hubs", mac, host,
+                            db.shade_hub(mac)["mac"])
     return JSONResponse({"hub": _hub_dict(db.shade_hub(mac)), "added": added})
 
 
@@ -2390,8 +2441,18 @@ async def api_refresh_hub(hub_id: str, request: Request):
     try:
         info = await run_in_threadpool(shadelib.device_list, hub["host"])
     except shadelib.ShadeError as exc:
-        db.update_shade_hub(hub_id, last_error=str(exc), last_seen=time.time())
-        return JSONResponse({"error": str(exc)}, status_code=502)
+        # It may simply have moved. Re-find it by MAC and try once more before
+        # calling it dead — a DHCP lease change should not need a human.
+        moved = await run_in_threadpool(_rehome, "shade_hubs", hub)
+        if moved is None:
+            db.update_shade_hub(hub_id, last_error=str(exc), last_seen=time.time())
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        try:
+            info = await run_in_threadpool(shadelib.device_list, moved)
+        except shadelib.ShadeError as exc2:
+            db.update_shade_hub(hub_id, last_error=str(exc2), last_seen=time.time())
+            return JSONResponse({"error": str(exc2)}, status_code=502)
+        hub = db.shade_hub(hub_id)
     db.update_shade_hub(hub_id, token=info.get("token"),
                         protocol=info.get("protocol"),
                         last_seen=time.time(), last_error=None)
@@ -2987,6 +3048,52 @@ def automations_page(request: Request):
     if not _is_admin(request):
         return RedirectResponse("/", status_code=303)
     return render(request, "automations.html")
+
+
+@app.get("/network", response_class=HTMLResponse)
+def network_page(request: Request):
+    if not _is_admin(request):
+        return RedirectResponse("/", status_code=303)
+    return render(request, "network.html")
+
+
+def _known_macs() -> dict[str, dict[str, Any]]:
+    """Everything Sentry already manages, keyed by MAC, so the inventory can
+    separate "this is your driveway camera" from "no idea what this is"."""
+    known: dict[str, dict[str, Any]] = {}
+    for camera in db.cameras():
+        mac = netscan.normalise_mac(camera["mac"] if "mac" in camera.keys() else None)
+        if mac:
+            known[mac] = {"kind": "camera", "name": camera["name"]}
+    for device in db.devices():
+        mac = netscan.normalise_mac(device["mac"] if "mac" in device.keys() else None)
+        if mac:
+            known[mac] = {"kind": "device", "name": device["name"]}
+    for hub in db.shade_hubs():
+        mac = netscan.normalise_mac(hub["mac"] if "mac" in hub.keys() else None)
+        if mac:
+            known[mac] = {"kind": "shade hub", "name": hub["name"]}
+        # The Connector protocol reports the hub's own MAC as its id, which is
+        # how it is identifiable before anyone has ever reached it by address.
+        protocol_mac = netscan.normalise_mac(hub["id"])
+        if protocol_mac:
+            known.setdefault(protocol_mac, {"kind": "shade hub", "name": hub["name"]})
+    return known
+
+
+@app.post("/api/network/scan")
+async def api_network_scan(request: Request):
+    """Sweep the LAN and name what answers. Read-only, and the vendor lookup is
+    offline — the house's MAC addresses are not sent anywhere."""
+    if not _is_admin(request):
+        return _forbidden()
+    rows = await run_in_threadpool(netscan.inventory, _known_macs())
+    return JSONResponse({
+        "devices": rows,
+        "network": str(netscan.local_network() or ""),
+        "unknown": sum(1 for r in rows
+                       if not r["known_kind"] and not r["randomised"]),
+    })
 
 
 @app.get("/api/automations")
