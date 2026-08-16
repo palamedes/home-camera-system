@@ -26,6 +26,8 @@ from typing import Any
 
 import httpx
 
+from . import config
+
 log = logging.getLogger("nvr.weather")
 
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
@@ -147,7 +149,12 @@ class WeatherService:
                 self.refresh()
             except Exception:
                 log.exception("weather refresh failed")
-            self._stop.wait(max(60, self.cfg.refresh_seconds))
+            # See events.py: the sleep is outside the try, so a bad interval
+            # here would take the whole weather service down without a trace.
+            self._stop.wait(
+                config.safe_interval(self.cfg.refresh_seconds,
+                                     default=600.0, minimum=60.0)
+            )
 
     # -- public read ---------------------------------------------------------
 

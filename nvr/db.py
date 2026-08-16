@@ -330,6 +330,37 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks(list_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_utc);
+
+-- Automations: bind something happening to something being done. Sentry knows
+-- things nothing else on the LAN knows; this is how it acts on them without a
+-- separate home-automation stack.
+CREATE TABLE IF NOT EXISTS automations (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT    NOT NULL,
+    -- URL-safe id. Every automation is reachable at /api/hook/run/<slug>
+    -- regardless of its trigger, which is the generic "poke Sentry" endpoint.
+    slug             TEXT    NOT NULL UNIQUE,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    -- 'event' fires from a detection Sentry raised; 'hook' only from its URL.
+    trigger_kind     TEXT    NOT NULL DEFAULT 'hook',
+    -- JSON event pattern, e.g. {"event_type":"person","camera_id":"driveway"}.
+    -- Absent keys match anything.
+    match            TEXT    NOT NULL DEFAULT '{}',
+    -- JSON list of actions: device / covering / webhook.
+    actions          TEXT    NOT NULL DEFAULT '[]',
+    -- A person loitering raises an event every poll; without this the porch
+    -- light would be commanded dozens of times a minute.
+    cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+    -- Optional window, so "porch light on" can mean "after dark". NULL times
+    -- mean the trigger alone decides.
+    days             INTEGER NOT NULL DEFAULT 127,
+    start_min        INTEGER,
+    end_min          INTEGER,
+    last_run         REAL,
+    last_error       TEXT,
+    run_count        INTEGER NOT NULL DEFAULT 0,
+    created_at       INTEGER NOT NULL
+);
 """
 
 
@@ -973,6 +1004,42 @@ class Database:
         return self.query(
             "SELECT * FROM schedules WHERE action = 'cover' ORDER BY start_min"
         )
+
+    # ---- automations -----------------------------------------------------
+
+    def automations(self, enabled_only: bool = False) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM automations"
+        if enabled_only:
+            sql += " WHERE enabled = 1"
+        return self.query(sql + " ORDER BY name")
+
+    def automation(self, automation_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM automations WHERE id = ?", (automation_id,))
+
+    def automation_by_slug(self, slug: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM automations WHERE slug = ?", (slug,))
+
+    def add_automation(self, **fields: Any) -> int:
+        fields.setdefault("created_at", int(time.time()))
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        cur = self.execute(
+            f"INSERT INTO automations ({cols}) VALUES ({marks})",
+            tuple(fields.values()),
+        )
+        return int(cur.lastrowid or 0)
+
+    def update_automation(self, automation_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        assigns = ", ".join(f"{k} = ?" for k in fields)
+        self.execute(
+            f"UPDATE automations SET {assigns} WHERE id = ?",
+            (*fields.values(), automation_id),
+        )
+
+    def delete_automation(self, automation_id: int) -> None:
+        self.execute("DELETE FROM automations WHERE id = ?", (automation_id,))
 
     # ---- task lists and tasks --------------------------------------------
 

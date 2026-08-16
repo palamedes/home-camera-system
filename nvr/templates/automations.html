@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Automations — Sentry{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>Automations</h1>
+    <p class="muted small">When something happens, do something.</p>
+  </div>
+  <div class="row" style="flex: 0 0 auto; gap: 8px; align-items: center;">
+    <button class="btn btn-sm btn-primary" id="auto-add">Add automation</button>
+  </div>
+</div>
+
+<div id="auto-alert"></div>
+<div id="auto-list"></div>
+
+<details class="panel blinds-help" style="margin-top: 22px;">
+  <summary>
+    <span class="blinds-help-text">
+      <span>Driving Sentry from outside</span>
+      <span class="muted small">Every automation has a URL — for a wall switch, a phone shortcut, or another machine</span>
+    </span>
+  </summary>
+  <div class="panel-pad blinds-help-body">
+    <p class="muted small">
+      Every automation can be run by fetching its URL with the shared token,
+      whether or not it also has a trigger. Anything that can make an HTTP
+      request can drive the house: a Shelly's own input button, an iOS or
+      Android shortcut, a scene controller, a cron job on another machine.
+    </p>
+    <h3>The URL</h3>
+    <pre class="auto-url" id="auto-token-example">/api/hook/run/&lt;name&gt;?token=…</pre>
+    <p class="muted small">
+      The token is shared by every hook endpoint and is shown on each
+      automation below. Treat it as a password: anyone on your network who has
+      it can run anything listed here.
+    </p>
+    <h3>Both methods work</h3>
+    <ul>
+      <li><code>GET</code> or <code>POST</code> — whichever your caller finds easier.</li>
+      <li>The token can go in the query string, or in an
+        <code>X-Sentry-Token</code> header if putting secrets in URLs bothers
+        you (it should — query strings end up in logs).</li>
+    </ul>
+    <h3>What it answers</h3>
+    <p class="muted small">
+      <code>{"ok": true, "ran": 2, "errors": []}</code> — and <code>ok</code>
+      is <code>false</code> with the failures listed if part of it did not work,
+      rather than reporting success for a half-run scene.
+    </p>
+  </div>
+</details>
+
+<div class="modal-backdrop" id="auto-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="auto-modal-title">
+    <div class="modal-head">
+      <h2 id="auto-modal-title">Add automation</h2>
+      <button class="modal-close" id="auto-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="auto-modal-body"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('automations.js') }}"></script>
+<script>initAutomations();</script>
+{% endblock %}

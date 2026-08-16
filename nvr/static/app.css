@@ -1424,3 +1424,24 @@ a.title:hover { color: var(--accent); }
 .task-detail-row { display: flex; gap: 10px; margin-bottom: 8px; font-size: 13.5px; }
 .task-detail-row .k { color: var(--muted); min-width: 90px; flex: none; }
 .task-detail-row .v { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---- automations ---- */
+
+.auto-url {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.auto-actions { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.auto-action {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-2);
+}
+.auto-action .field:last-child { margin-bottom: 0; }
+.modal-body .auto-action .btn { width: auto; }

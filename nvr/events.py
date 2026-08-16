@@ -19,6 +19,7 @@ import threading
 import time
 from typing import Any
 
+from . import config
 from .reolink import ReolinkClient
 
 log = logging.getLogger("nvr.events")
@@ -79,7 +80,12 @@ class EventService:
                 self.poll_once()
             except Exception:
                 log.exception("event poll failed")
-            self._stop.wait(self.cfg.poll_seconds)
+            # Coerced defensively: this sleep sits AFTER the try, so anything
+            # thrown here would kill the poller outright — silently, permanently,
+            # and with the UI still reporting detection as enabled.
+            self._stop.wait(
+                config.safe_interval(self.cfg.poll_seconds, default=2.0, minimum=0.5)
+            )
 
     def poll_once(self) -> None:
         detect = {d.strip().lower() for d in (self.cfg.detect or []) if d}

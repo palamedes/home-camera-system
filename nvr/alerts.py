@@ -38,9 +38,12 @@ _LABELS = {
 
 
 class AlertService:
-    def __init__(self, config: Any, db: Any):
+    def __init__(self, config: Any, db: Any, automations: Any = None):
         self.config = config
         self.db = db
+        # Set after construction (the automation service needs the db too);
+        # optional so tests can build a dispatcher without one.
+        self.automations = automations
         self._last: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -74,6 +77,19 @@ class AlertService:
         event_id = self.db.add_event(
             camera_id, ts, type, label, score, json.dumps(meta)
         )
+        # Automations see every event that is recorded, notified or not: a
+        # cooldown on the webhook is about not pestering a human, and has
+        # nothing to do with whether a light should come on. Failures here must
+        # never stop an event being recorded or an alert being sent.
+        if self.automations is not None:
+            try:
+                self.automations.handle_event({
+                    "event_type": type, "camera_id": camera_id,
+                    "camera_name": camera_name, "label": label,
+                    "ts": ts, "score": score, "meta": meta,
+                })
+            except Exception:
+                log.exception("automation dispatch failed for %s", type)
         if notify:
             self.notify({
                 "type": type,

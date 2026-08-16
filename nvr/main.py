@@ -31,6 +31,8 @@ from . import (
 )
 from .db import Database
 from .alerts import AlertService
+from .automations import AutomationService
+from . import automations as automationlib
 from .events import EventService
 from .recorder import RecordingService
 from .retention import RetentionService
@@ -46,6 +48,11 @@ log = logging.getLogger("nvr")
 
 HERE = Path(__file__).resolve().parent
 
+# Saved-clip upload limits. The cap is enforced while streaming, so a body that
+# lies about its length still cannot exhaust memory.
+MAX_CLIP_BYTES = 512 * 1024 * 1024
+CLIP_CHUNK_BYTES = 1024 * 1024
+
 cfg = config_module.load()
 db = Database(cfg.db_path)
 # Replay any in-app settings edits over the config.yaml defaults before the
@@ -56,6 +63,10 @@ recording = RecordingService(cfg, db, go2rtc)
 retention = RetentionService(cfg, db)
 scheduler = SchedulerService(cfg, db, recording)
 alerts = AlertService(cfg, db)
+automations = AutomationService(cfg, db, devices=devicelib, shades=shadelib)
+# Wired after construction: the dispatcher is what every detector funnels
+# through, so it is the one place automations need to observe.
+alerts.automations = automations
 weather = WeatherService(cfg, alerts)
 events = EventService(cfg, db, alerts)
 migrator = StorageMigrator(cfg, db)
@@ -95,10 +106,12 @@ async def lifespan(_app: FastAPI):
     retention.start()
     weather.start()
     events.start()
+    automations.start()
     log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
     try:
         yield
     finally:
+        automations.stop()
         events.stop()
         weather.stop()
         retention.stop()
@@ -164,6 +177,24 @@ class _HTTPSUpgradeMiddleware:
 app = FastAPI(title="Sentry NVR", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 app.add_middleware(auth.AuthMiddleware, db=db, config=cfg)
+
+
+# A malformed JSON body is the caller's mistake, not ours. Handled centrally
+# rather than at each of the twenty-odd endpoints that read one: a per-site
+# try/except is something every future endpoint has to remember, and forgetting
+# it turns a typo in somebody's curl command into a 500 and a stack trace in
+# the log.
+@app.exception_handler(json.JSONDecodeError)
+async def _malformed_json(_request: Request, _exc: Exception) -> JSONResponse:
+    return JSONResponse({"error": "bad request: body is not valid JSON"},
+                        status_code=400)
+
+
+@app.exception_handler(UnicodeDecodeError)
+async def _undecodable_body(_request: Request, _exc: Exception) -> JSONResponse:
+    return JSONResponse({"error": "bad request: body is not valid UTF-8"},
+                        status_code=400)
+
 # Added last => outermost => runs before auth, so a plain-HTTP hit upgrades to
 # HTTPS instead of first bouncing to http://.../login.
 app.add_middleware(_HTTPSUpgradeMiddleware)
@@ -2839,6 +2870,221 @@ async def api_hook_blinds(request: Request):
     return JSONResponse({"ok": True, **command, **result})
 
 
+# ---------------------------------------------------------------------------
+# Automations — the generic framework. An automation binds a trigger (an event
+# Sentry raised, or nothing at all) to a list of actions, and every one of them
+# gets a URL whether or not it has a trigger:
+#
+#     /api/hook/run/<slug>?token=<t>
+#
+# which is the "poke Sentry" endpoint: a Shelly's input button, a phone
+# shortcut, a scene controller, a cron job on another box.
+# ---------------------------------------------------------------------------
+
+def _automation_dict(row: Any) -> dict[str, Any]:
+    def loads(raw: str, fallback: Any) -> Any:
+        try:
+            return json.loads(raw or "")
+        except ValueError:
+            return fallback
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "slug": row["slug"],
+        "enabled": bool(row["enabled"]),
+        "trigger_kind": row["trigger_kind"],
+        "match": loads(row["match"], {}),
+        "actions": loads(row["actions"], []),
+        "cooldown_seconds": row["cooldown_seconds"],
+        "days": row["days"],
+        "start_min": row["start_min"],
+        "end_min": row["end_min"],
+        "last_run": row["last_run"],
+        "last_error": row["last_error"],
+        "run_count": row["run_count"],
+        "url": f"/api/hook/run/{row['slug']}",
+    }
+
+
+def _unique_slug(name: str) -> str:
+    base = slugify(name) or "automation"
+    candidate, suffix = base, 2
+    while db.automation_by_slug(candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _automation_fields(payload: dict[str, Any], *, creating: bool
+                       ) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate a whole automation up front.
+
+    Actions are checked when they are saved rather than when they fire: a typo
+    that only surfaces at 2am when the driveway camera sees somebody is a bad
+    way to learn the automation never worked.
+    """
+    fields: dict[str, Any] = {}
+    if creating or "name" in payload:
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return None, "A name is required."
+        fields["name"] = name
+    if creating or "trigger_kind" in payload:
+        kind = payload.get("trigger_kind") or "hook"
+        if kind not in automationlib.TRIGGER_KINDS:
+            return None, f"trigger must be one of {', '.join(automationlib.TRIGGER_KINDS)}"
+        fields["trigger_kind"] = kind
+    if creating or "actions" in payload:
+        try:
+            fields["actions"] = json.dumps(
+                automationlib.validate_actions(payload.get("actions"))
+            )
+        except automationlib.AutomationError as exc:
+            return None, str(exc)
+    if "match" in payload:
+        try:
+            fields["match"] = json.dumps(automationlib.validate_match(payload["match"]))
+        except automationlib.AutomationError as exc:
+            return None, str(exc)
+    if "cooldown_seconds" in payload:
+        try:
+            cooldown = int(payload["cooldown_seconds"])
+        except (TypeError, ValueError):
+            return None, "cooldown must be a number"
+        if not 0 <= cooldown <= 86400:
+            return None, "cooldown must be 0..86400 seconds"
+        fields["cooldown_seconds"] = cooldown
+    if "days" in payload:
+        try:
+            days = int(payload["days"])
+        except (TypeError, ValueError):
+            return None, "days must be a number"
+        if not 0 <= days <= 127:
+            return None, "days must be a 0..127 bitmask"
+        fields["days"] = days
+    for key in ("start_min", "end_min"):
+        if key not in payload:
+            continue
+        value = payload[key]
+        if value in (None, ""):
+            fields[key] = None
+            continue
+        try:
+            minute = int(value)
+        except (TypeError, ValueError):
+            return None, f"{key} must be a number"
+        if not 0 <= minute <= 1439:
+            return None, f"{key} must be within 0..1439"
+        fields[key] = minute
+    if "enabled" in payload:
+        fields["enabled"] = 1 if payload["enabled"] else 0
+    return fields, None
+
+
+@app.get("/automations", response_class=HTMLResponse)
+def automations_page(request: Request):
+    if not _is_admin(request):
+        return RedirectResponse("/", status_code=303)
+    return render(request, "automations.html")
+
+
+@app.get("/api/automations")
+def api_automations(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    return JSONResponse({
+        "automations": [_automation_dict(a) for a in db.automations()],
+        "action_kinds": list(automationlib.ACTION_KINDS),
+        "trigger_kinds": list(automationlib.TRIGGER_KINDS),
+        "devices": [{"id": d["id"], "name": d["name"]} for d in db.devices()],
+        "rooms": [_room_dict(r) for r in db.rooms()],
+        "layers": [{"value": v, "label": LAYER_LABELS[v]} for v in LAYERS],
+        "cameras": [{"id": c["id"], "name": c["name"]}
+                    for c in db.cameras() if not c["archived"]],
+        "event_types": ["person", "vehicle", "animal", "motion", "flood"],
+        "token": _automation_token(),
+    })
+
+
+@app.post("/api/automations")
+async def api_add_automation(request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields, error = _automation_fields(payload, creating=True)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    fields["slug"] = _unique_slug(fields["name"])
+    automation_id = db.add_automation(**fields)
+    return JSONResponse(_automation_dict(db.automation(automation_id)))
+
+
+@app.patch("/api/automations/{automation_id}")
+async def api_update_automation(automation_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.automation(automation_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    fields, error = _automation_fields(payload, creating=False)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+    if not fields:
+        return JSONResponse({"error": "nothing to update"}, status_code=400)
+    db.update_automation(automation_id, **fields)
+    return JSONResponse(_automation_dict(db.automation(automation_id)))
+
+
+@app.delete("/api/automations/{automation_id}")
+def api_delete_automation(automation_id: int, request: Request):
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.automation(automation_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.delete_automation(automation_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/automations/{automation_id}/run")
+async def api_run_automation(automation_id: int, request: Request):
+    """Run it now, from the UI. Reports what failed rather than pretending."""
+    if not _is_admin(request):
+        return _forbidden()
+    if not db.automation(automation_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        result = await run_in_threadpool(automations.run_now, automation_id, {})
+    except automationlib.AutomationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": not result["errors"], **result})
+
+
+@app.api_route("/api/hook/run/{slug}", methods=["GET", "POST"])
+async def api_hook_run(slug: str, request: Request):
+    """The generic inbound trigger. Anything that can fetch a URL can drive
+    Sentry through this: /api/hook/run/<slug>?token=<t>"""
+    token = request.query_params.get("token") or request.headers.get("X-Sentry-Token")
+    if not token or not secrets.compare_digest(str(token), _automation_token()):
+        return JSONResponse({"error": "bad token"}, status_code=403)
+    row = db.automation_by_slug(slug)
+    if row is None or not row["enabled"]:
+        return JSONResponse({"error": "automation not found"}, status_code=404)
+    try:
+        result = await run_in_threadpool(
+            automations.run_now, row["id"], {"source": "hook"}
+        )
+    except automationlib.AutomationError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": not result["errors"], **result})
+
+
 @app.get("/api/automation/token")
 def api_automation_token(request: Request):
     if not auth.is_admin(auth.current_user(request)):
@@ -3344,10 +3590,12 @@ async def api_save_clip(
     camera = db.camera(camera_id)
     if not camera or not can_view(request, camera):
         return JSONResponse({"error": "not found"}, status_code=404)
-    data = await file.read()
-    if not data:
-        return JSONResponse({"error": "empty clip"}, status_code=400)
-    if len(data) > 512 * 1024 * 1024:
+
+    # Reject an oversized upload from its declared length before reading a byte.
+    # Advisory (a client can lie), which is why the streaming cap below is the
+    # real enforcement — but it costs nothing and stops the honest case early.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_CLIP_BYTES:
         return JSONResponse({"error": "clip too large"}, status_code=413)
 
     # Never persist the client's Content-Type: it's echoed back on download, so
@@ -3356,14 +3604,49 @@ async def api_save_clip(
     is_webm = "webm" in (file.content_type or "").lower()
     ext = ".webm" if is_webm else ".mp4"
     mime = "video/webm" if is_webm else "video/mp4"
-    fname = f"{slugify(camera_id)}-{int(time.time())}{ext}"
+    # The random suffix is not decoration. A second-resolution name collides
+    # whenever two clips are saved from the same camera inside one second: the
+    # second silently overwrote the first, leaving the first clip's database row
+    # pointing at the wrong video. It also made the cleanup below destructive —
+    # a rejected upload would delete the good clip it happened to collide with.
+    fname = f"{slugify(camera_id)}-{int(time.time())}-{secrets.token_hex(4)}{ext}"
     dest = cfg.storage.clips_dir / fname
-    dest.write_bytes(data)
+
+    # Streamed to disk in chunks and capped as it goes. Reading the whole body
+    # first and checking its length afterwards means a 2 GB post is fully
+    # materialised in memory before being refused — on a 4-core box with the
+    # recorders running, that is enough to matter.
+    size = 0
+    too_large = False
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(CLIP_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_CLIP_BYTES:
+                    too_large = True
+                    break
+                out.write(chunk)
+    except OSError as exc:
+        dest.unlink(missing_ok=True)
+        log.warning("clip upload failed: %s", exc)
+        return JSONResponse({"error": "could not save clip"}, status_code=500)
+
+    # A partial file left behind is a disk leak nobody would ever go looking
+    # for, so every rejection path cleans up after itself.
+    if too_large:
+        dest.unlink(missing_ok=True)
+        return JSONResponse({"error": "clip too large"}, status_code=413)
+    if size == 0:
+        dest.unlink(missing_ok=True)
+        return JSONResponse({"error": "empty clip"}, status_code=400)
 
     vid = int(vcam_id) if vcam_id.strip().isdigit() else None
     clip_id = db.add_clip(
         camera_id=camera_id, name=(name.strip() or "Clip"), path=str(dest),
-        mime=mime, size=len(data),
+        mime=mime, size=size,
         vcam_id=vid, start_ts=start or None, duration=duration or None,
     )
     return JSONResponse({"id": clip_id, "redirect": "/clips"})

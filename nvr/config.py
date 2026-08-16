@@ -7,6 +7,8 @@ the defaults here, so a half-written config still boots.
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import secrets
 import shutil
@@ -15,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger("nvr.config")
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -232,6 +236,27 @@ class Config:
 def _resolve(base: Path, value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else (base / path)
+
+
+def safe_interval(value: Any, *, default: float, minimum: float = 0.5) -> float:
+    """Interpret a configured sleep interval without ever raising.
+
+    Background loops sleep on a value that ultimately comes from config, and
+    that sleep sits after the try block that guards the work — so anything
+    thrown here kills the thread outright, silently and permanently, while the
+    UI happily goes on reporting the service as configured. Falling back to a
+    sane default and logging is strictly better than a service that quietly
+    stops existing.
+    """
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        log.warning("bad interval %r; falling back to %ss", value, default)
+        return default
+    if not math.isfinite(seconds):
+        log.warning("non-finite interval %r; falling back to %ss", value, default)
+        return default
+    return max(minimum, seconds)
 
 
 def load(path: Path | None = None) -> Config:
