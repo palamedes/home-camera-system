@@ -281,3 +281,18 @@ def test_a_virtual_camera_has_its_own_dashboard_flag(admin_client, db):
     assert r.status_code == 200, r.text
     assert db.one("SELECT show_on_dashboard FROM virtual_cameras WHERE id = ?",
                   (vid,))["show_on_dashboard"] == 0
+
+
+# --- mobile navigation ------------------------------------------------------
+
+def test_the_nav_has_a_toggle_for_narrow_screens(admin_client):
+    """Seven destinations do not fit a phone header; the nav collapses behind
+    a button whose visibility is decided by CSS, not by JS."""
+    body = admin_client.get("/").text
+    assert 'id="nav-toggle"' in body
+    assert 'aria-controls="main-nav"' in body
+    assert 'id="main-nav"' in body
+
+
+def test_the_toggle_starts_closed(admin_client):
+    assert 'aria-expanded="false"' in admin_client.get("/").text

@@ -24,7 +24,17 @@
     Sentry
   </a>
   {% set path = request.url.path %}
-  <nav>
+  {# Seven destinations do not fit a phone. Below the breakpoint the nav
+     collapses behind this button; above it, the button is hidden and the nav
+     is a normal row. #}
+  <button class="nav-toggle" id="nav-toggle" type="button"
+          aria-expanded="false" aria-controls="main-nav" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8"
+            stroke-linecap="round" fill="none"/>
+    </svg>
+  </button>
+  <nav id="main-nav">
     <a href="/" class="{{ 'active' if path == '/' }}">Dashboard</a>
     {# Clips lives as a button on the Cameras page, like Wall view — so the
        nav stays one row per top-level area rather than per page. #}

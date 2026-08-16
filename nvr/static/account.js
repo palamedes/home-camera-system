@@ -146,3 +146,43 @@
     }
   });
 })();
+
+/* Collapsed navigation on narrow screens.
+ *
+ * Seven destinations do not fit a phone's header, so below the CSS breakpoint
+ * the nav becomes a panel behind a button. The button itself is hidden by CSS
+ * on wide screens, so this listener simply never fires there — no viewport
+ * matching in JS, and nothing to keep in sync with the stylesheet. */
+(function () {
+  const toggle = document.getElementById('nav-toggle');
+  const nav = document.getElementById('main-nav');
+  if (!toggle || !nav) return;
+
+  function setOpen(open) {
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    nav.classList.toggle('nav-open', open);
+  }
+
+  toggle.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+  });
+
+  // Tapping a link navigates away, but closing first stops the panel flashing
+  // over the new page on a slow load.
+  nav.addEventListener('click', (event) => {
+    if (event.target.closest('a')) setOpen(false);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!nav.contains(event.target) && event.target !== toggle) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+
+  // Growing past the breakpoint must not leave the panel stuck open, since the
+  // class that opens it means something different in the wide layout.
+  window.addEventListener('resize', () => setOpen(false));
+})();

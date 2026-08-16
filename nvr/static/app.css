@@ -172,6 +172,7 @@ a { color: inherit; text-decoration: none; }
   place-items: center;
   padding: 24px;
   z-index: 100;
+  overflow-y: auto;
 }
 .modal {
   width: 100%;
@@ -180,7 +181,14 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
+  /* A tall dialog used to run off the bottom of the screen with no way to
+     reach its buttons. Cap it against the viewport and let the body scroll.
+     dvh, not vh, because a phone's address bar makes vh lie. */
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
 }
+.modal-head { flex: none; }
 .modal-head {
   display: flex;
   align-items: center;
@@ -199,7 +207,7 @@ a { color: inherit; text-decoration: none; }
   padding: 0 4px;
 }
 .modal-close:hover { color: var(--text); }
-.modal-body { padding: 18px; }
+.modal-body { padding: 18px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .modal-body .btn { width: 100%; justify-content: center; margin-top: 4px; }
 
 /* ---- toggle switch ---- */
@@ -1454,3 +1462,103 @@ a.title:hover { color: var(--accent); }
 .net-row-open:hover { background: var(--panel-2); }
 .net-row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .net-notes { overflow-wrap: anywhere; }
+
+/* ---- phones ------------------------------------------------------------- */
+
+/* The hamburger is hidden by default and revealed at the breakpoint, so the
+   script that drives it simply never fires on a wide screen. */
+.nav-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 6px;
+  cursor: pointer;
+  align-items: center;
+  margin-right: auto;
+}
+.nav-toggle:hover { background: var(--panel-2); border-color: var(--line); }
+.nav-toggle[aria-expanded="true"] { background: var(--panel-2); border-color: var(--line); color: var(--text); }
+
+@media (max-width: 860px) {
+  .nav-toggle { display: inline-flex; }
+
+  /* Out of the header and into a panel under it. Positioned rather than
+     in-flow so opening it does not shove the page down. */
+  .topbar nav {
+    display: none;
+    position: absolute;
+    top: 56px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 12px 24px rgb(0 0 0 / .35);
+    margin-right: 0;
+  }
+  .topbar nav.nav-open { display: flex; }
+  .topbar nav a { padding: 11px 14px; border-radius: 8px; font-size: 15px; }
+  .topbar nav a.active { background: var(--panel-2); }
+}
+
+@media (max-width: 640px) {
+  /* .row is for form fields sharing a line; on a phone there is no line to
+     share, and the 180px floor forced the page wider than the screen. */
+  .row > * { min-width: 0; }
+  .row { gap: 10px; }
+
+  .page-head { align-items: stretch; gap: 12px; }
+  .page-head h1 { font-size: 19px; }
+  .page-head > .row { width: 100%; }
+
+  .modal-backdrop { padding: 12px; }
+  .modal { max-height: calc(100dvh - 24px); }
+  .modal-wide { max-width: 100%; }
+
+  /* Controls that sat in a row beside a name need their own line, or the name
+     is squeezed to nothing. */
+  .blinds-item { align-items: flex-start; }
+  .blinds-item .grow { flex-basis: 100%; }
+  .blinds-slider { width: 100%; }
+  .blinds-slider input[type="range"] { flex: 1; width: auto; }
+
+  .list-item { flex-wrap: wrap; gap: 10px; }
+  .list-item .grow { flex-basis: 100%; min-width: 0; }
+  /* The delete strip must stay pinned to the edge, not wrap onto its own row. */
+  .remove-x { align-self: stretch; }
+
+  .task-board { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+
+  /* A seven-column month grid on a 360px screen: keep it readable by dropping
+     to the day number and a count of dots rather than truncated titles. */
+  .cal-day { min-height: 62px; padding: 4px; }
+  .cal-event-title { display: none; }
+  .cal-day-list { flex-direction: row; flex-wrap: wrap; gap: 3px; }
+  .cal-more { font-size: 10px; }
+  .cal-dow { padding: 6px 4px; font-size: 10px; }
+
+  .auto-url { font-size: 11px; }
+}
+
+/* Touch targets. A pointer that cannot hover is a finger, and 40px is the
+   smallest thing a finger reliably hits. */
+@media (pointer: coarse) {
+  .btn, .btn-sm { min-height: 40px; }
+  .remove-x { min-width: 44px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  .net-row, .task-card, .blinds-item { padding-top: 12px; padding-bottom: 12px; }
+}
+
+/* Nothing should ever push the page sideways; if something does, it is a bug,
+   but the user should not be the one who finds out by scrolling.
+
+   `clip`, not `hidden`: overflow-x:hidden on html/body makes one of them a
+   scroll container, which silently breaks position:sticky — and the header is
+   sticky. `clip` contains the overflow without creating that container. */
+html, body { max-width: 100%; overflow-x: clip; }
+img, video, canvas, svg { max-width: 100%; }
