@@ -350,6 +350,11 @@ CREATE TABLE IF NOT EXISTS lan_devices (
     last_seen    REAL,
     -- Ignore this one in the "unidentified" count without labelling it.
     dismissed    INTEGER NOT NULL DEFAULT 0,
+    -- Present in the very first scan, so it is part of the existing picture of
+    -- the network rather than an arrival. Without this every device reads as
+    -- "new" on first run, which makes the flag worthless exactly when somebody
+    -- is first looking at the list.
+    baseline     INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL
 );
 
@@ -540,6 +545,16 @@ class Database:
             cols = {row["name"] for row in self.query(f"PRAGMA table_info({table})")}
             if cols and "mac" not in cols:
                 self.execute(f"ALTER TABLE {table} ADD COLUMN mac TEXT")
+
+        lan_cols = {row["name"] for row in self.query("PRAGMA table_info(lan_devices)")}
+        if lan_cols and "baseline" not in lan_cols:
+            self.execute(
+                "ALTER TABLE lan_devices ADD COLUMN baseline INTEGER NOT NULL DEFAULT 0"
+            )
+            # Everything already recorded predates the idea of a baseline, so
+            # it IS the baseline — otherwise the upgrade would announce the
+            # whole house as newly arrived.
+            self.execute("UPDATE lan_devices SET baseline = 1")
 
         user_cols = {row["name"] for row in self.query("PRAGMA table_info(users)")}
         if "role" not in user_cols:
@@ -1057,6 +1072,10 @@ class Database:
             "last_seen = excluded.last_seen",
             (mac, address, when, when, int(when)),
         )
+
+    def mark_lan_baseline(self) -> None:
+        """Treat everything currently recorded as the existing network."""
+        self.execute("UPDATE lan_devices SET baseline = 1")
 
     def update_lan_device(self, mac: str, **fields: Any) -> None:
         if not fields:

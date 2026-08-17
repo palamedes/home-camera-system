@@ -442,3 +442,100 @@ def test_every_kind_has_an_icon():
     for value, label, icon in ns.DEVICE_KINDS:
         assert value and label and icon, value
     assert len(ns.KIND_VALUES) == len(ns.DEVICE_KINDS), "duplicate kind value"
+
+
+# --- "new" only means new -------------------------------------------------
+
+def test_the_first_scan_establishes_a_baseline_not_a_house_full_of_arrivals(
+        admin_client, monkeypatch, app_module):
+    """Everything reads as new on first run otherwise, which makes the flag
+    worthless exactly when somebody first looks at the list."""
+    monkeypatch.setattr(app_module.netscan, "sweep", lambda *a, **k: {
+        "192.168.1.10": "fc:b9:7e:5f:fd:b5",
+        "192.168.1.11": "fc:b9:7e:4d:41:a2",
+    })
+    body = admin_client.post("/api/network/scan").json()
+    assert all(not d["is_new"] for d in body["devices"])
+
+
+def test_something_that_turns_up_later_is_new(
+        admin_client, monkeypatch, app_module):
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.post("/api/network/scan")
+    monkeypatch.setattr(app_module.netscan, "sweep", lambda *a, **k: {
+        "192.168.1.10": "fc:b9:7e:5f:fd:b5",
+        "192.168.1.88": "70:c9:32:80:23:e8",
+    })
+    by_mac = {d["mac"]: d for d in
+              admin_client.post("/api/network/scan").json()["devices"]}
+    assert by_mac["70:c9:32:80:23:e8"]["is_new"] is True
+    assert by_mac["fc:b9:7e:5f:fd:b5"]["is_new"] is False
+
+
+def test_a_device_seen_again_does_not_become_new(
+        admin_client, monkeypatch, app_module):
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.post("/api/network/scan")
+    for _ in range(3):
+        body = admin_client.post("/api/network/scan").json()
+    assert body["devices"][0]["is_new"] is False
+
+
+def test_an_old_arrival_stops_being_new(
+        admin_client, db, monkeypatch, app_module):
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.10": "fc:b9:7e:5f:fd:b5"})
+    admin_client.post("/api/network/scan")
+    # Arrived after the baseline, but a month ago.
+    import time
+    db.update_lan_device("fc:b9:7e:5f:fd:b5",
+                         baseline=0, first_seen=time.time() - 30 * 86400)
+    body = admin_client.get("/api/network/devices").json()
+    assert body["devices"][0]["is_new"] is False
+
+
+def test_a_device_sentry_manages_never_counts_as_unidentified(
+        admin_client, db, monkeypatch, app_module):
+    """So offering to "stop counting it" would be a control that does nothing —
+    which is why the UI does not offer it."""
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door")
+    db.execute("UPDATE cameras SET mac = ? WHERE id = ?",
+               ("ec:71:db:2c:0c:44", "front"))
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.53": "ec:71:db:2c:0c:44"})
+    body = admin_client.post("/api/network/scan").json()
+    assert body["unknown"] == 0
+    assert body["devices"][0]["known_kind"] == "camera"
+
+
+def test_a_scan_learns_the_mac_of_a_camera_known_only_by_address(
+        admin_client, db, monkeypatch, app_module):
+    """Cameras are never reached through the device control paths that learn a
+    MAC, so without this they show as an unidentified Reolink forever."""
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door", host="192.168.1.53")
+    assert db.camera("front")["mac"] is None
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.53": "ec:71:db:2c:0c:44"})
+    body = admin_client.post("/api/network/scan").json()
+    assert db.camera("front")["mac"] == "ec:71:db:2c:0c:44"
+    # And it is reported as managed in the same response, not only the next one.
+    assert body["devices"][0]["known_name"] == "Front Door"
+    assert body["unknown"] == 0
+
+
+def test_backfill_does_not_overwrite_a_known_mac(
+        admin_client, db, monkeypatch, app_module):
+    """If the stored MAC and the address disagree, the address is the thing
+    that changed — believing it would rewrite the device's identity."""
+    from conftest import add_camera
+    add_camera(db, "front", "Front Door", host="192.168.1.53")
+    db.execute("UPDATE cameras SET mac = ? WHERE id = ?",
+               ("ec:71:db:2c:0c:44", "front"))
+    monkeypatch.setattr(app_module.netscan, "sweep",
+                        lambda *a, **k: {"192.168.1.53": "70:c9:32:80:23:e8"})
+    admin_client.post("/api/network/scan")
+    assert db.camera("front")["mac"] == "ec:71:db:2c:0c:44"

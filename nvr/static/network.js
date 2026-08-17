@@ -83,13 +83,6 @@ function initNetwork() {
     return '❓';
   }
 
-  function isNew(device) {
-    // Something that first appeared in the last day is worth a second look in
-    // a house that runs a security system.
-    if (!device.first_seen) return false;
-    return (Date.now() / 1000 - device.first_seen) < 86400;
-  }
-
   function visible() {
     const mode = filter.value;
     return state.devices.filter(d => {
@@ -127,11 +120,17 @@ function initNetwork() {
     if (device.known_kind) {
       title.appendChild(el('span', 'pill', 'in Sentry'));
     }
-    if (isNew(device)) title.appendChild(el('span', 'pill', 'new'));
+    if (device.is_new) title.appendChild(el('span', 'pill', 'new'));
     if (device.randomised) {
       title.appendChild(el('span', 'pill pill-off', 'randomised'));
     }
-    if (device.dismissed) title.appendChild(el('span', 'pill pill-off', 'ignored'));
+    // Only worth showing when it is actually doing something. On a device
+    // Sentry already manages, or one that has been named, the count already
+    // excludes it and the badge says nothing.
+    if (device.dismissed && !device.known_kind && !device.label
+        && device.kind === 'unknown') {
+      title.appendChild(el('span', 'pill pill-off', 'not counted'));
+    }
     grow.appendChild(title);
 
     const bits = [device.address || 'not seen', device.mac];
@@ -227,13 +226,23 @@ function initNetwork() {
     notes.placeholder = 'Where it lives, what it is for, anything worth remembering.';
     body.appendChild(field('Notes', notes));
 
-    const ignore = el('label', 'checkbox');
+    // Offered only where it would change something. A device Sentry manages
+    // is already identified by definition, so the checkbox would be a control
+    // that does nothing — and the badge it produced was pure noise.
     const ignoreBox = document.createElement('input');
     ignoreBox.type = 'checkbox';
     ignoreBox.checked = device.dismissed;
-    ignore.appendChild(ignoreBox);
-    ignore.appendChild(el('span', null, 'Stop counting this as unidentified'));
-    body.appendChild(ignore);
+    if (device.known_kind) {
+      body.appendChild(el('p', 'muted small',
+        `Already managed by Sentry as a ${device.known_kind}, so it never `
+        + 'counts as unidentified.'));
+    } else {
+      const ignore = el('label', 'checkbox');
+      ignore.appendChild(ignoreBox);
+      ignore.appendChild(el('span', null,
+        'Not something I need to identify \u2014 stop counting it'));
+      body.appendChild(ignore);
+    }
 
     const save = el('button', 'btn btn-primary', 'Save');
     save.type = 'button';

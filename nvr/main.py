@@ -50,6 +50,9 @@ HERE = Path(__file__).resolve().parent
 
 # Saved-clip upload limits. The cap is enforced while streaming, so a body that
 # lies about its length still cannot exhaust memory.
+# How long a newly-arrived network device keeps its badge.
+NEW_DEVICE_SECONDS = 7 * 86400
+
 MAX_CLIP_BYTES = 512 * 1024 * 1024
 CLIP_CHUNK_BYTES = 1024 * 1024
 
@@ -3089,14 +3092,22 @@ def _annotate(rows: list[dict[str, Any]], *, record: bool) -> list[dict[str, Any
     """
     now = time.time()
     if record:
+        # A first scan establishes what is already here; nothing found in it is
+        # an arrival. Without this every device reads as "new" on first run,
+        # which makes the flag worthless exactly when somebody first looks.
+        first_ever = not db.lan_devices()
         for row in rows:
             db.seen_lan_device(row["mac"], row["address"], now)
+        if first_ever:
+            db.mark_lan_baseline()
     saved = {d["mac"]: d for d in db.lan_devices()}
     out = []
     for row in rows:
         entry = saved.get(row["mac"])
         kind = (entry["kind"] if entry else None) or "unknown"
         label = (entry["label"] if entry else None) or None
+        first_seen = entry["first_seen"] if entry else None
+        baseline = bool(entry["baseline"]) if entry else False
         out.append({
             **row,
             "label": label,
@@ -3104,8 +3115,13 @@ def _annotate(rows: list[dict[str, Any]], *, record: bool) -> list[dict[str, Any
             "icon": netscan.KIND_ICONS.get(kind, "❓"),
             "notes": entry["notes"] if entry else None,
             "dismissed": bool(entry["dismissed"]) if entry else False,
-            "first_seen": entry["first_seen"] if entry else None,
+            "first_seen": first_seen,
             "last_seen": entry["last_seen"] if entry else None,
+            # Arrived after Sentry already knew what the network looked like,
+            # and recently enough to still be worth a second glance. Decided
+            # here rather than in the browser so there is one definition of it.
+            "is_new": bool(first_seen and not baseline
+                           and (now - first_seen) < NEW_DEVICE_SECONDS),
             # Best name available, in order of how much a human meant it.
             "display": label or row["known_name"] or row["vendor"] or "Unknown device",
         })
@@ -3117,6 +3133,36 @@ def _is_identified(row: dict[str, Any]) -> bool:
                 or row["dismissed"] or row["randomised"])
 
 
+def _backfill_macs(rows: list[dict[str, Any]]) -> None:
+    """Attach a MAC to anything Sentry knows only by address."""
+    by_address = {row["address"]: row["mac"] for row in rows}
+
+    def learn(current: Any, host: Any) -> str | None:
+        if current or not host:
+            return None
+        return by_address.get(str(host))
+
+    for camera in db.cameras():
+        mac = learn(camera["mac"] if "mac" in camera.keys() else None, camera["host"])
+        if mac:
+            db.update_camera(camera["id"], mac=mac)
+            log.info("learned %s for camera %s", mac, camera["id"])
+    for device in db.devices():
+        mac = learn(device["mac"] if "mac" in device.keys() else None, device["host"])
+        if mac:
+            db.update_device(device["id"], mac=mac)
+    for hub in db.shade_hubs():
+        mac = learn(hub["mac"] if "mac" in hub.keys() else None, hub["host"])
+        if mac:
+            db.update_shade_hub(hub["id"], mac=mac)
+
+
+def _known_for(mac: str) -> dict[str, Any]:
+    entry = _known_macs().get(mac)
+    return {"known_kind": entry["kind"] if entry else None,
+            "known_name": entry["name"] if entry else None}
+
+
 @app.post("/api/network/scan")
 async def api_network_scan(request: Request):
     """Sweep the LAN and name what answers. Read-only, and the vendor lookup is
@@ -3124,6 +3170,13 @@ async def api_network_scan(request: Request):
     if not _is_admin(request):
         return _forbidden()
     found = await run_in_threadpool(netscan.inventory, _known_macs())
+    # A scan is the cheapest chance to learn the MAC of things Sentry manages
+    # by address but has never had to look up — cameras in particular, which
+    # are never reached through the device control paths that learn one.
+    _backfill_macs(found)
+    # Re-derive, since a backfilled MAC is what makes a camera show as managed
+    # rather than as an unidentified Reolink.
+    found = [{**row, **_known_for(row["mac"])} for row in found]
     rows = _annotate(found, record=True)
     return JSONResponse({
         "devices": rows,
