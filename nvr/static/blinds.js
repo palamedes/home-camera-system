@@ -493,6 +493,25 @@ function initBlinds() {
     item.appendChild(grow);
 
     item.appendChild(slider(covering));
+
+    // The poll endpoint existed but nothing called it. Asking one shade where
+    // it is, right now, is the quickest way to settle "did that work?".
+    const check = el('button', 'btn btn-sm', 'Check');
+    check.type = 'button';
+    check.title = 'Ask this covering where it actually is';
+    check.addEventListener('click', async () => {
+      check.disabled = true;
+      try {
+        await post(`/api/blinds/coverings/${encodeURIComponent(covering.id)}/poll`);
+        await load();
+      } catch (err) {
+        say(err.message, true);
+      } finally {
+        check.disabled = false;
+      }
+    });
+    item.appendChild(check);
+
     item.appendChild(moveBtn('Open', covering, { action: 'open' }));
     item.appendChild(moveBtn('Close', covering, { action: 'close' }));
     item.appendChild(moveBtn('Stop', covering, { action: 'stop' }));
@@ -504,6 +523,18 @@ function initBlinds() {
       item.appendChild(edit);
     }
     return item;
+  }
+
+  function readAge(seconds) {
+    // A position that has not been confirmed for a while is a guess, and
+    // should look like one rather than sitting there as a bare number.
+    if (!seconds) return null;
+    const mins = Math.floor((Date.now() / 1000 - seconds) / 60);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} hr ago`;
+    return `${Math.round(hours / 24)} d ago`;
   }
 
   function statusLine(covering) {
@@ -523,6 +554,8 @@ function initBlinds() {
     if (covering.rssi != null) {
       bits.push(`signal ${covering.rssi} dBm` + (covering.rssi < -90 ? ' — weak' : ''));
     }
+    const age = readAge(covering.last_seen);
+    if (age) bits.push(`read ${age}`);
     return bits.join(' · ') || 'No reading yet';
   }
 

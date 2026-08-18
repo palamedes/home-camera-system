@@ -37,6 +37,7 @@ from .events import EventService
 from .recorder import RecordingService
 from .retention import RetentionService
 from .scheduler import SchedulerService
+from .shadepoll import ShadePollService
 from .storage_migrate import StorageMigrator
 from .weather import WeatherService
 
@@ -67,6 +68,7 @@ retention = RetentionService(cfg, db)
 scheduler = SchedulerService(cfg, db, recording)
 alerts = AlertService(cfg, db)
 automations = AutomationService(cfg, db, devices=devicelib, shades=shadelib)
+shadepoll = ShadePollService(cfg, db)
 # Wired after construction: the dispatcher is what every detector funnels
 # through, so it is the one place automations need to observe.
 alerts.automations = automations
@@ -110,11 +112,13 @@ async def lifespan(_app: FastAPI):
     weather.start()
     events.start()
     automations.start()
+    shadepoll.start()
     log.info("NVR ready on http://%s:%s", cfg.server.host, cfg.server.port)
     try:
         yield
     finally:
         automations.stop()
+        shadepoll.stop()
         events.stop()
         weather.stop()
         retention.stop()
@@ -2666,6 +2670,9 @@ async def api_command_covering(covering_id: str, request: Request):
     elif command["action"] in ("open", "close"):
         fields["last_position"] = 0 if command["action"] == "open" else 100
     db.update_covering(covering_id, **fields)
+    # What was just written is the TARGET. Watch it until it settles, so the
+    # page ends up showing where the shade actually got to.
+    shadepoll.watch(covering_id)
     return JSONResponse({"ok": True, **command})
 
 
@@ -2740,6 +2747,7 @@ def _run_group(targets: list[Any], command: dict[str, Any]) -> dict[str, Any]:
             fields["last_position"] = 0 if command["action"] == "open" else 100
         db.update_covering(covering["id"], **fields)
         moved.append(covering["id"])
+        shadepoll.watch(covering["id"])
     return {"moved": moved, "failed": failed}
 
 
